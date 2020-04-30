@@ -1,0 +1,38 @@
+--- /dev/null	Thu Jan  1 08:00:00 1970
++++ source/Kernel_basesoc_ast_ex-2.60.0-src/data/73-drivers_net_ethernet_aspeed_ast_ether.patch	Fri Aug  4 11:25:55 2017
+@@ -0,0 +1,35 @@
++diff -Naur linux/drivers/net/ethernet/aspeed/ast_ether.c linux.new/drivers/net/ethernet/aspeed/ast_ether.c
++--- linux/drivers/net/ethernet/aspeed/ast_ether.c	2017-08-04 11:23:09.348366745 +0800
+++++ linux.new/drivers/net/ethernet/aspeed/ast_ether.c	2017-08-04 11:17:55.068376049 +0800
++@@ -1606,6 +1606,12 @@
++ 	return err;
++ }
++ 
+++void ast_ether_register_ethtool(struct net_device* dev)   
+++{   
+++	if(dev != NULL)   
+++               SET_ETHTOOL_OPS(dev, &ast_ether_ethtool_ops);   
+++}  
+++
++ #define AST_SCU_CLK_STOP_MAC2            0x00200000 /* bit 21 */
++ #define AST_SCU_CLK_STOP_MAC1            0x00100000 /* bit 20 */
++ 
++@@ -1702,6 +1708,8 @@
++ 	}
++ }
++ 
+++EXPORT_SYMBOL(ast_ether_register_ethtool);
+++
++ module_init(ast_ether_init);
++ module_exit(ast_ether_exit);
++ 
++diff -Naur linux/drivers/net/ethernet/aspeed/ast_ether.h linux.new/drivers/net/ethernet/aspeed/ast_ether.h
++--- linux/drivers/net/ethernet/aspeed/ast_ether.h	2017-08-04 11:23:05.696366853 +0800
+++++ linux.new/drivers/net/ethernet/aspeed/ast_ether.h	2017-08-04 11:18:25.508375148 +0800
++@@ -349,5 +349,6 @@
++ 
++ extern void ast_ether_get_mac_addr(unsigned char *mac_addr);
++ extern int ast_ether_eeprom_read(unsigned int offset, unsigned char *buffer, unsigned int cnt);
+++extern void ast_ether_register_ethtool(struct net_device *dev);
++  
++ #endif  /* _AST_ETHER_H_ */

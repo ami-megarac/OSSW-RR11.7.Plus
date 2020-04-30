@@ -1,0 +1,11 @@
+--- .pristine/webui_html5_libs-2.13.0-src/spx/RULES	Wed Apr 24 19:13:47 2019
++++ source/webui_html5_libs-2.13.0-src/spx/RULES	Mon Apr 29 15:18:23 2019
+@@ -9,6 +9,8 @@
+ 	COPY_DIR %SOURCE/%PACKAGE/data/moment %SOURCE/%PACKAGE/data/vendor/bower/moment
+ 	MKDIR_CLEAN %SOURCE/%PACKAGE/data/vendor/bower/jquery.slimscroll
+ 	COPY_DIR %SOURCE/%PACKAGE/data/jquery.slimscroll %SOURCE/%PACKAGE/data/vendor/bower/jquery.slimscroll
++	#MKDIR_CLEAN %SOURCE/%PACKAGE/data/vendor/bower/undertemplate
++	COPY_DIR %SOURCE/%PACKAGE/data/undertemplate %SOURCE/%PACKAGE/data/vendor/bower/undertemplate
+ 
+ #Build Source in %BUILD
+ build_source:

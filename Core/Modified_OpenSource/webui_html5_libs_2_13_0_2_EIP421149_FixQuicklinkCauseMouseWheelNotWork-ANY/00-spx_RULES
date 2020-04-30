@@ -1,0 +1,12 @@
+--- .pristine/webui_html5_libs-2.13.0-src/spx/RULES	Fri Jul 27 11:08:02 2018
++++ source/webui_html5_libs-2.13.0-src/spx/RULES	Fri Jul 27 16:24:35 2018
+@@ -7,7 +7,9 @@
+ 	MKDIR_CLEAN %SOURCE/%PACKAGE/data/vendor/bower/moment
+ 	COPY_DIR %SOURCE/%PACKAGE/data/eonasdan-bootstrap-datetimepicker %SOURCE/%PACKAGE/data/vendor/bower/eonasdan-bootstrap-datetimepicker
+ 	COPY_DIR %SOURCE/%PACKAGE/data/moment %SOURCE/%PACKAGE/data/vendor/bower/moment
++	MKDIR_CLEAN %SOURCE/%PACKAGE/data/vendor/bower/jquery.slimscroll
++	COPY_DIR %SOURCE/%PACKAGE/data/jquery.slimscroll %SOURCE/%PACKAGE/data/vendor/bower/jquery.slimscroll
+
+ #Build Source in %BUILD
+ build_source:
+ 	#CWD %BUILD/%PACKAGE/data/

@@ -1,0 +1,8 @@
+--- .pristine/ncml_configuration-2.6.0-src/spx/RULES	Thu Oct 12 11:00:23 2017
++++ source/ncml_configuration-2.6.0-src/spx/RULES	Thu Oct 12 14:55:04 2017
+@@ -11,4 +11,5 @@
+ 
+ # Rules to create ncml_configuration package
+ build_package-ncml_configuration:
++	COPY_FILE %BUILD/%PACKAGE/data/ncmlupdate_cfg %TEMPDIR/%PACKAGE/tmp
+ 	PACK_SPX ./ %SOURCE/%PACKAGE/data

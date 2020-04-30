@@ -1,0 +1,15 @@
+--- /dev/null	Thu Jan  1 08:00:00 1970
++++ source/lighttpd-2.62.0-src/spx/PATCHES/FILES/AMI-EXT/24_src_network.c.patch	Mon Nov 20 20:27:15 2017
+@@ -0,0 +1,12 @@
++diff -Naur lighttpd/src/network.c lighttpd.new/src/network.c
++--- lighttpd/src/network.c	2017-11-20 20:01:47.369067551 +0800
+++++ lighttpd.new/src/network.c	2017-11-20 20:25:31.029103404 +0800
++@@ -1070,7 +1070,7 @@
++ 	buffer_copy_string_buffer(b, srv->srvconf.bindhost);
++ 	buffer_append_string_len(b, CONST_STR_LEN(":"));
++ 	buffer_append_long(b, srv->srvconf.port);
++-	if((strncmp(g_serviceconf.InterfaceName,"both",strlen("both")) != 0) && (g_corefeatures.automation_engine_support == ENABLED))
+++	if((strncmp(g_serviceconf.InterfaceName,"both",strlen("both")) != 0) && (g_corefeatures.automation_engine_support == ENABLED) &&(strncmp(g_serviceconf.InterfaceName,"FFFFFFFFFFFFFFFF",MAX_SERVICE_IFACE_NAME_SIZE)!= 0))
++ 	{
++ 		InterfaceCount = 2;
++ 	}

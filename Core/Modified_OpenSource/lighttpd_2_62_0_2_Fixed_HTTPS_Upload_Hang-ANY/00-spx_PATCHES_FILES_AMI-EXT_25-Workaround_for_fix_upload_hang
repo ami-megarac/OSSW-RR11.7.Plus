@@ -1,0 +1,64 @@
+--- /dev/null	Thu Jan  1 08:00:00 1970
++++ source/lighttpd-2.25.0-src/spx/PATCHES/FILES/AMI-EXT/25-Workaround_for_fix_upload_hang	Mon Jan 16 16:20:33 2017
+@@ -0,0 +1,61 @@
++diff -Naur lighttpd_old/src/base.h lighttpd/src/base.h
++--- lighttpd_old/src/base.h	2017-01-16 16:09:14.586589170 +0800
+++++ lighttpd/src/base.h	2017-01-16 15:18:06.762876738 +0800
++@@ -443,6 +443,7 @@
++ 	int dupped ;
++ #ifdef USE_OPENSSL
++ 	SSL *ssl;
+++	BIO *bio;
++ # ifndef OPENSSL_NO_TLSEXT
++ 	buffer *tlsext_server_name;
++ # endif
++diff -Naur lighttpd_old/src/connections.c lighttpd/src/connections.c
++--- lighttpd_old/src/connections.c	2017-01-16 16:09:14.582589181 +0800
+++++ lighttpd/src/connections.c	2017-01-16 15:24:07.501974678 +0800
++@@ -128,8 +128,10 @@
++ 		//Dont free SSL .Tunneling might be using it .Tunneling will free it.
++ 		if(con->dupped != 1){
++ 			if (con->ssl) SSL_free(con->ssl);
+++			if (con->bio) BIO_free(con->bio);
++ 		}
++ 		con->ssl = NULL;
+++		con->bio = NULL;
++ 	}
++ #endif
++ 
++@@ -337,7 +339,8 @@
++ 		read_offset = (b->used > 0) ? b->used - 1 : 0;
++ 		toread = b->size - 1 - read_offset;
++ 
++-		len = SSL_read(con->ssl, b->ptr + read_offset, toread);
+++	//	len = SSL_read(con->ssl, b->ptr + read_offset, toread);
+++		len = BIO_read(con->bio, b->ptr + read_offset, toread);
++ 
++ 		if (con->renegotiations > 1 && con->conf.ssl_disable_client_renegotiation) {
++ 			log_error_write(srv, __FILE__, __LINE__, "s", "SSL: renegotiation initiated by client, killing connection");
++@@ -1525,6 +1528,25 @@
++ 						ERR_error_string(ERR_get_error(), NULL));
++ 				return NULL;
++ 			}
+++			/*
+++			 *  Create a new BIO and SSL session for this web request
+++			*/
+++			BIO *bio, *bioSSL, *bioSock;
+++							
+++			bio = BIO_new(BIO_f_buffer());
+++			if (!BIO_set_write_buffer_size(bio, 128)) {
+++			    printf("\n~~ BIO_set_write_buffer_size failed");
+++			    return NULL;
+++			}
+++															
+++			bioSSL =  BIO_new(BIO_f_ssl());
+++			bioSock = BIO_new_socket(con->fd, BIO_NOCLOSE);
+++			SSL_set_bio(con->ssl, bioSock, bioSock);
+++																								
+++			BIO_set_ssl(bioSSL, con->ssl, BIO_CLOSE);
+++			BIO_push(bio, bioSSL);
+++								
+++			con->bio = bio;
++ 		}
++ #endif
++ 		return con;

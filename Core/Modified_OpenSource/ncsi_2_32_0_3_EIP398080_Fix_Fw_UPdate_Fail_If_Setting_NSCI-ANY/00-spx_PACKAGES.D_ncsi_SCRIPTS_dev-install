@@ -1,0 +1,11 @@
+--- .pristine/ncsi-2.32.0-src/spx/PACKAGES.D/ncsi/SCRIPTS/dev-install	Mon Jan 22 16:18:06 2018
++++ source/ncsi-2.32.0-src/spx/PACKAGES.D/ncsi/SCRIPTS/dev-install	Fri Mar 30 14:21:35 2018
+@@ -2,7 +2,7 @@
+ 
+ build-install:
+ 		COPY_DIR		./ %IMAGE_TREE/lib/modules/generic/misc/
+-		ADD_MODULES ncsi
++		ADD_MODULES_ONLY ncsi
+ 		MAKE_CHAR_NODE ncsi 200 0
+ 		EXECUTE if [ "%CONFIG_SPX_FEATURE_NCSI_MANUAL_SWITCH" == "YES" ]; then echo "CONFIG_SPX_FEATURE_NCSI_MANUAL_SWITCH" >> %IMAGE_TREE/etc/core_features; fi
+ 		EXECUTE if [ "%CONFIG_SPX_FEATURE_NCSI_AUTO_FAILOVER" == "YES" ]; then echo "CONFIG_SPX_FEATURE_NCSI_AUTO_FAILOVER" >> %IMAGE_TREE/etc/core_features; fi

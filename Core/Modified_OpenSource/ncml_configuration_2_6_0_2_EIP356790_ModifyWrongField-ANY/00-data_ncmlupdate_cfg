@@ -1,0 +1,19 @@
+--- .pristine/ncml_configuration-2.6.0-src/data/ncmlupdate_cfg	Fri Oct 13 14:36:02 2017
++++ source/ncml_configuration-2.6.0-src/data/ncmlupdate_cfg	Mon Oct 16 10:07:19 2017
+@@ -22,13 +22,13 @@
+ 	print usage
+ 	sys.exit(0)
+ 
+-if (int(sys.argv[2],16) == 1): #KVM MaxSessionInactivityTimeout
++if (int(sys.argv[2],16) == 1): #KVM session_timeout
+ 	output = open(ncml_file,'r+')
+ 	if (sys.argv[3] == "YES"):
+-		i = 22 #jumping to KVM session timeout value line
++		i = 19 #jumping to KVM session timeout value line
+ 		while i > 0:
+ 			output.readline()
+ 			i -= 1
+-		output.write("%s=%d\n" % ("MaxSessionInactivityTimeout",int(sys.argv[4],16)))
++		output.write("%s=%d\n" % ("session_timeout",int(sys.argv[4],16)))
+ 	output.close()
+ #end of main module

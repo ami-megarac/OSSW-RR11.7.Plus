@@ -1,0 +1,13 @@
+--- .pristine/webui_html5_libs-2.13.0-src/spx/RULES	Mon Mar 12 18:17:38 2018
++++ source/webui_html5_libs-2.13.0-src/spx/RULES	Mon Mar 12 19:34:50 2018
+@@ -3,6 +3,10 @@
+ 	INVOKE_SHELL check_deps.sh
+ 	UNTAR_BZ2 %SOURCE/%PACKAGE/data/node_modules.tar.bz2 %SOURCE/%PACKAGE/data/
+ 	UNTAR_BZ2 %SOURCE/%PACKAGE/data/vendor.tar.bz2 %SOURCE/%PACKAGE/data/
++	MKDIR_CLEAN %SOURCE/%PACKAGE/data/vendor/bower/eonasdan-bootstrap-datetimepicker
++	MKDIR_CLEAN %SOURCE/%PACKAGE/data/vendor/bower/moment
++	COPY_DIR %SOURCE/%PACKAGE/data/eonasdan-bootstrap-datetimepicker %SOURCE/%PACKAGE/data/vendor/bower/eonasdan-bootstrap-datetimepicker
++	COPY_DIR %SOURCE/%PACKAGE/data/moment %SOURCE/%PACKAGE/data/vendor/bower/moment
+ 
+ #Build Source in %BUILD
+ build_source:
