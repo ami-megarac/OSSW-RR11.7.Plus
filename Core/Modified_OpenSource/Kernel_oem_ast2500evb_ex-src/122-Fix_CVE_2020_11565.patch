@@ -1,0 +1,23 @@
+diff -Naur linux.old/mm/mempolicy.c linux/mm/mempolicy.c
+--- linux.old/mm/mempolicy.c	2020-05-22 11:38:55.821766599 +0800
++++ linux/mm/mempolicy.c	2020-05-22 11:40:42.760646302 +0800
+@@ -2815,7 +2815,9 @@
+ 	switch (mode) {
+ 	case MPOL_PREFERRED:
+ 		/*
+-		 * Insist on a nodelist of one node only
++		 * Insist on a nodelist of one node only, although later
++		 * we use first_node(nodes) to grab a single node, so here
++		 * nodelist (or nodes) cannot be empty.
+ 		 */
+ 		if (nodelist) {
+ 			char *rest = nodelist;
+@@ -2823,6 +2825,8 @@
+ 				rest++;
+ 			if (*rest)
+ 				goto out;
++			if (nodes_empty(nodes))
++				goto out;
+ 		}
+ 		break;
+ 	case MPOL_INTERLEAVE:

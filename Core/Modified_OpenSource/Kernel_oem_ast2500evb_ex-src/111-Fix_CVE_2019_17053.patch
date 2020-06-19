@@ -1,0 +1,13 @@
+diff -Naur linux.old/net/ieee802154/af_ieee802154.c linux/net/ieee802154/af_ieee802154.c
+--- linux.old/net/ieee802154/af_ieee802154.c	2019-11-29 11:21:29.352756861 +0800
++++ linux/net/ieee802154/af_ieee802154.c	2019-11-29 11:22:49.756322324 +0800
+@@ -253,6 +253,9 @@
+ 
+ 	switch (sock->type) {
+ 	case SOCK_RAW:
++		rc = -EPERM;
++		if (!capable(CAP_NET_RAW))
++			goto out;
+ 		proto = &ieee802154_raw_prot;
+ 		ops = &ieee802154_raw_ops;
+ 		break;

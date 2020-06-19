@@ -1,0 +1,183 @@
+--- linux_old/drivers/mtd/maps/ractrends.c	2018-12-06 14:57:34.401383630 +0800
++++ linux/drivers/mtd/maps/ractrends.c	2018-12-06 16:28:49.449522172 +0800
+@@ -21,6 +21,7 @@
+ #include "../mtdcore.h"
+ #include <linux/init.h>
+ 
++
+ #if defined (CONFIG_SPX_FEATURE_GLOBAL_DUAL_IMAGE_SUPPORT)
+ #define IMAGE_1  "imagebooted=1"
+ #define IMAGE_2  "imagebooted=2"
+@@ -29,8 +30,12 @@
+ #ifdef CONFIG_SPX_FEATURE_GLOBAL_BKUP_FLASH_BANKS
+ #define MAX_BANKS (CONFIG_SPX_FEATURE_GLOBAL_FLASH_BANKS + CONFIG_SPX_FEATURE_GLOBAL_BKUP_FLASH_BANKS)
+ #else
++#ifdef CONFIG_SPX_FEATURE_INDIVIDUAL_SPI_ACCESS
++#define MAX_BANKS 1
++#else
+ #define MAX_BANKS CONFIG_SPX_FEATURE_GLOBAL_FLASH_BANKS
+ #endif
++#endif
+ static struct mtd_info *ractrends_mtd[MAX_BANKS];
+ 
+ static struct mtd_partition ractrends_flash_partitions[16];
+@@ -40,7 +45,7 @@
+ #define FULL_FLASH_PARTITION_NAME	"fullpart"
+ unsigned char total_active_spi_banks;
+ #ifdef CONFIG_SPX_FEATURE_HW_FAILSAFE_BOOT
+-unsigned char broken_spi_banks = 0;// specify bank#0 of SPI Flash is broken or not
++unsigned char broken_spi_banks = 0;// specify the number of broken SPI flash bank
+ #endif
+ 
+ unsigned long
+@@ -61,7 +66,14 @@
+ #if defined CONFIG_SPX_FEATURE_DEDICATED_SPI_FLASH_BANK
+     unsigned long img2_offset=0;
+     for(i=0;i<CONFIG_SPX_FEATURE_SECONDARY_IMAGE_SPI;i++){
+-        img2_offset+=ractrends_mtd[i]->size;
++#ifdef CONFIG_SPX_FEATURE_HW_FAILSAFE_BOOT
++		if (broken_spi_banks == 1)
++			img2_offset = (CONFIG_SPX_FEATURE_GLOBAL_USED_FLASH_START - CONFIG_SPX_FEATURE_GLOBAL_FLASH_START);
++		else
++#endif
++		{
++			img2_offset+=ractrends_mtd[i]->size;
++		}
+     }
+ 
+ #endif
+@@ -195,6 +207,61 @@
+ static struct mtd_info *concat_mtd = NULL;
+ static unsigned long bankcount= 0;
+ 
++
++#ifdef CONFIG_SPX_FEATURE_INDIVIDUAL_SPI_ACCESS
++struct map_info individual_spi_flash_map;
++static struct mtd_info *individual_spi_mtd = NULL;
++static struct mtd_partition individual_spi_flash_partitions;
++static char individual_spi_partition_name[16];
++
++void create_individual_spi_partition(void)
++{
++	unsigned long SPI_FlashAddr = CONFIG_SPX_FEATURE_INDIVIDUAL_SPI_FLASH_START;
++	unsigned long SPI_FlashSize = CONFIG_SPX_FEATURE_INDIVIDUAL_SPI_FLASH_SIZE;
++	unsigned long SPI_bank = CONFIG_SPX_FEATURE_INDIVIDUAL_SPI_BANK_NUMBER;
++	int status = 0;
++
++	printk("Probing for Individual SPI Flash at Bank # %ld\n",SPI_bank);
++	individual_spi_flash_map.name = "Individual SPI Flash";
++    individual_spi_flash_map.bankwidth = 2;
++    individual_spi_flash_map.size = SPI_FlashSize;
++    individual_spi_flash_map.phys = SPI_FlashAddr;
++    individual_spi_flash_map.map_priv_1 = SPI_bank;
++    individual_spi_mtd = NULL;
++    simple_map_init(&individual_spi_flash_map);
++
++	#if defined CONFIG_SPX_FEATURE_GLOBAL_FLASH_TYPE_SPI
++		individual_spi_mtd = do_map_probe("spi_probe",&individual_spi_flash_map);
++	#else
++	#if defined CONFIG_SPX_FEATURE_GLOBAL_FLASH_TYPE_NOR
++		individual_spi_mtd = do_map_probe("cfi_probe",&individual_spi_flash_map);
++	#else
++	#error	CONFIG_SPX_FEATURE_GLOBAL_FLASH_TYPE is not defined or defined with unknown flash type
++	#endif
++	#endif
++	if (!individual_spi_mtd) 
++	{
++		printk("ERROR: init_ractrends_flash: flash probe failed\n");
++		//return -ENXIO;
++	}
++	individual_spi_mtd->owner = THIS_MODULE;
++
++	/* Create a MTD for full HOST SPI Flash */
++	strncpy(individual_spi_partition_name,CONFIG_SPX_FEATURE_INDIVIDUAL_SPI_MTD_NAME,strlen(CONFIG_SPX_FEATURE_INDIVIDUAL_SPI_MTD_NAME));
++	
++	individual_spi_flash_partitions.name   = individual_spi_partition_name;
++	individual_spi_flash_partitions.offset = 0;
++	individual_spi_flash_partitions.size 	 = SPI_FlashSize;
++	individual_spi_flash_partitions.mask_flags = 0;
++	printk("MTD Partition %s @ 0x%lx of Size 0x%lx\n",
++						individual_spi_flash_partitions.name,
++						(unsigned long)individual_spi_flash_partitions.offset,
++						(unsigned long)individual_spi_flash_partitions.size);
++
++	status = add_mtd_partitions(individual_spi_mtd,&individual_spi_flash_partitions,1);
++}
++#endif
++
+ int __init 
+ init_ractrends_flash(void)
+ {
+@@ -242,24 +309,50 @@
+ 		{
+ 			if (bank == 0)
+ 			{
++#ifdef CONFIG_SPX_FEATURE_HW_FAILSAFE_BOOT
++				broken_spi_banks = 1;
++				continue;
++#else
+ 				printk("ERROR: init_ractrends_flash: flash probe failed\n");
+ 				return -ENXIO;
++#endif
+ 			}
+ #ifdef CONFIG_SPX_FEATURE_HW_FAILSAFE_BOOT
+ 			if (bank == 1)
+-				broken_spi_banks = 1;
++				broken_spi_banks = 2;
+ #endif 
+ 			break;
+ 		}
+ 		ractrends_mtd[bank]->owner = THIS_MODULE;
+ 	}
+-	bankcount = bank;
++#ifdef CONFIG_SPX_FEATURE_HW_FAILSAFE_BOOT
++	if (broken_spi_banks == 1)
++	{
++		bank = 1;
++		bankcount = bank;
++	}
++	else
++#endif
++	{
++		bankcount = bank;
++	}
+ 	total_active_spi_banks = bankcount;
+ 
+ 	if (bank > 1)	
+ 		concat_mtd = mtd_concat_create(ractrends_mtd,bank,"Concat Ractrends");
+ 	else	
+-		concat_mtd = ractrends_mtd[0];
++	{
++#ifdef CONFIG_SPX_FEATURE_HW_FAILSAFE_BOOT
++		if (broken_spi_banks == 1)
++		{
++			concat_mtd = ractrends_mtd[1];
++		}
++		if (broken_spi_banks == 2)
++#endif
++		{
++			concat_mtd = ractrends_mtd[0];
++		}
++	}
+ 	if (!concat_mtd){
+ 		printk("ERROR: init_ractrends_flash: flash concat failed\n");
+ 		return -ENXIO;}
+@@ -292,7 +385,7 @@
+ 		return status;
+ #ifdef CONFIG_SPX_FEATURE_GLOBAL_FAILSAFECONF
+ 	ractrends_flash_partitions[PartCount].name   		= "conf";
+-	ractrends_flash_partitions[PartCount].offset        = ractrends_flash_partitions[PartCount-1].offset + CONFIG_SPX_FEATURE_GLOBAL_CONF_SIZE;
++	ractrends_flash_partitions[PartCount].offset        = (CONFIG_SPX_FEATURE_GLOBAL_USED_FLASH_SIZE * 2) + CONFIG_SPX_FEATURE_GLOBAL_CONF_SIZE;
+     ractrends_flash_partitions[PartCount].size   		= CONFIG_SPX_FEATURE_GLOBAL_CONF_SIZE;
+ 	ractrends_flash_partitions[PartCount].mask_flags 	= 0;
+ 	printk("MTD Partition %ld : %s @ 0x%lx of Size 0x%lx\n",PartCount,
+@@ -305,6 +398,9 @@
+ #endif
+ #endif
+ 
++#ifdef CONFIG_SPX_FEATURE_INDIVIDUAL_SPI_ACCESS
++	create_individual_spi_partition();
++#endif
+ 	return status;
+ }
+ 

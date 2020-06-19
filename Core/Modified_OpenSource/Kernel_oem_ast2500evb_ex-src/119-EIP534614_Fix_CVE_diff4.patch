@@ -1,0 +1,1113 @@
+diff -Naur linux.old/drivers/net/ethernet/broadcom/bnx2x/bnx2x_main.c linux/drivers/net/ethernet/broadcom/bnx2x/bnx2x_main.c
+--- linux.old/drivers/net/ethernet/broadcom/bnx2x/bnx2x_main.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/drivers/net/ethernet/broadcom/bnx2x/bnx2x_main.c	2020-04-21 15:56:28.170215149 +0800
+@@ -12235,6 +12235,26 @@
+ 	return 0;
+ }
+ 
++static bool bnx2x_gso_check(struct sk_buff *skb, struct net_device *dev)
++{
++	/*
++	 * A skb with gso_size + header length > 9700 will cause a
++	 * firmware panic. Drop GSO support.
++	 *
++	 * Eventually the upper layer should not pass these packets down.
++	 *
++	 * For speed, if the gso_size is <= 9000, assume there will
++	 * not be 700 bytes of headers and pass it through. Only do a
++	 * full (slow) validation if the gso_size is > 9000.
++	 */
++	if (unlikely(skb_is_gso(skb) &&
++		     (skb_shinfo(skb)->gso_size > 9000) &&
++		     !skb_gso_validate_mac_len(skb, 9700)))
++		return false;
++
++	return true;
++}
++
+ static const struct net_device_ops bnx2x_netdev_ops = {
+ 	.ndo_open		= bnx2x_open,
+ 	.ndo_stop		= bnx2x_close,
+@@ -12265,6 +12285,7 @@
+ 	.ndo_busy_poll		= bnx2x_low_latency_recv,
+ #endif
+ 	.ndo_get_phys_port_id	= bnx2x_get_phys_port_id,
++	.ndo_gso_check 		= bnx2x_gso_check,
+ };
+ 
+ static int bnx2x_set_coherency_mask(struct bnx2x *bp)
+diff -Naur linux.old/drivers/net/macvtap.c linux/drivers/net/macvtap.c
+--- linux.old/drivers/net/macvtap.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/drivers/net/macvtap.c	2020-04-21 16:02:42.635717066 +0800
+@@ -302,7 +302,7 @@
+ 	 */
+ 	if (q->flags & IFF_VNET_HDR)
+ 		features |= vlan->tap_features;
+-	if (netif_needs_gso(skb, features)) {
++	if (netif_needs_gso(dev, skb, features)) {
+ 		struct sk_buff *segs = __skb_gso_segment(skb, features, false);
+ 
+ 		if (IS_ERR(segs))
+diff -Naur linux.old/drivers/net/xen-netfront.c linux/drivers/net/xen-netfront.c
+--- linux.old/drivers/net/xen-netfront.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/drivers/net/xen-netfront.c	2020-04-21 16:03:04.566362892 +0800
+@@ -582,7 +582,7 @@
+ 
+ 	if (unlikely(!netif_carrier_ok(dev) ||
+ 		     (slots > 1 && !xennet_can_sg(dev)) ||
+-		     netif_needs_gso(skb, netif_skb_features(skb)))) {
++		     netif_needs_gso(dev, skb, netif_skb_features(skb)))) {
+ 		spin_unlock_irqrestore(&np->tx_lock, flags);
+ 		goto drop;
+ 	}
+diff -Naur linux.old/drivers/usb/core/config.c linux/drivers/usb/core/config.c
+--- linux.old/drivers/usb/core/config.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/drivers/usb/core/config.c	2020-04-21 14:43:42.556869009 +0800
+@@ -422,6 +422,9 @@
+ 	unsigned iad_num = 0;
+ 
+ 	memcpy(&config->desc, buffer, USB_DT_CONFIG_SIZE);
++	nintf = nintf_orig = config->desc.bNumInterfaces;
++	config->desc.bNumInterfaces = 0;	// Adjusted later
++
+ 	if (config->desc.bDescriptorType != USB_DT_CONFIG ||
+ 	    config->desc.bLength < USB_DT_CONFIG_SIZE ||
+ 	    config->desc.bLength > size) {
+@@ -435,7 +438,6 @@
+ 	buffer += config->desc.bLength;
+ 	size -= config->desc.bLength;
+ 
+-	nintf = nintf_orig = config->desc.bNumInterfaces;
+ 	if (nintf > USB_MAXINTERFACES) {
+ 		dev_warn(ddev, "config %d has too many interfaces: %d, "
+ 		    "using maximum allowed: %d\n",
+diff -Naur linux.old/drivers/usb/core/hub.c linux/drivers/usb/core/hub.c
+--- linux.old/drivers/usb/core/hub.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/drivers/usb/core/hub.c	2020-04-21 14:44:15.076735013 +0800
+@@ -108,6 +108,7 @@
+ #define HUB_DEBOUNCE_STEP	  25
+ #define HUB_DEBOUNCE_STABLE	 100
+ 
++static void hub_release(struct kref *kref);
+ static int usb_reset_and_verify_device(struct usb_device *udev);
+ 
+ static inline char *portspeed(struct usb_hub *hub, int portstatus)
+@@ -2197,7 +2198,7 @@
+ 		/* descriptor may appear anywhere in config */
+ 		if (__usb_get_extra_descriptor (udev->rawdescriptors[0],
+ 					le16_to_cpu(udev->config[0].desc.wTotalLength),
+-					USB_DT_OTG, (void **) &desc) == 0) {
++					USB_DT_OTG, (void **) &desc, sizeof(*desc)) == 0) {
+ 			if (desc->bmAttributes & USB_OTG_HNP) {
+ 				unsigned		port1 = udev->portnum;
+ 
+diff -Naur linux.old/drivers/usb/core/usb.c linux/drivers/usb/core/usb.c
+--- linux.old/drivers/usb/core/usb.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/drivers/usb/core/usb.c	2020-04-21 14:45:10.665749435 +0800
+@@ -661,14 +661,14 @@
+  */
+ 
+ int __usb_get_extra_descriptor(char *buffer, unsigned size,
+-			       unsigned char type, void **ptr)
++			       unsigned char type, void **ptr, size_t minsize)
+ {
+ 	struct usb_descriptor_header *header;
+ 
+ 	while (size >= sizeof(struct usb_descriptor_header)) {
+ 		header = (struct usb_descriptor_header *)buffer;
+ 
+-		if (header->bLength < 2) {
++		if (header->bLength < 2 || header->bLength > size) {
+ 			printk(KERN_ERR
+ 				"%s: bogus descriptor, type %d length %d\n",
+ 				usbcore_name,
+@@ -677,7 +677,7 @@
+ 			return -1;
+ 		}
+ 
+-		if (header->bDescriptorType == type) {
++		if (header->bDescriptorType == type && header->bLength >= minsize) {
+ 			*ptr = header;
+ 			return 0;
+ 		}
+diff -Naur linux.old/drivers/usb/host/hwa-hc.c linux/drivers/usb/host/hwa-hc.c
+--- linux.old/drivers/usb/host/hwa-hc.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/drivers/usb/host/hwa-hc.c	2020-04-21 14:45:33.636502643 +0800
+@@ -618,7 +618,7 @@
+ 	top = itr + itr_size;
+ 	result = __usb_get_extra_descriptor(usb_dev->rawdescriptors[index],
+ 			le16_to_cpu(usb_dev->actconfig->desc.wTotalLength),
+-			USB_DT_SECURITY, (void **) &secd);
++			USB_DT_SECURITY, (void **) &secd, sizeof(*secd));
+ 	if (result == -1) {
+ 		dev_warn(dev, "BUG? WUSB host has no security descriptors\n");
+ 		return 0;
+diff -Naur linux.old/drivers/video/fbcmap.c linux/drivers/video/fbcmap.c
+--- linux.old/drivers/video/fbcmap.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/drivers/video/fbcmap.c	2020-04-21 15:20:09.389771432 +0800
+@@ -163,17 +163,19 @@
+ 
+ int fb_copy_cmap(const struct fb_cmap *from, struct fb_cmap *to)
+ {
+-	int tooff = 0, fromoff = 0;
+-	int size;
++	unsigned int tooff = 0, fromoff = 0;
++	size_t size;
+ 
+ 	if (to->start > from->start)
+ 		fromoff = to->start - from->start;
+ 	else
+ 		tooff = from->start - to->start;
+-	size = to->len - tooff;
+-	if (size > (int) (from->len - fromoff))
+-		size = from->len - fromoff;
+-	if (size <= 0)
++	
++	if (fromoff >= from->len || tooff >= to->len)
++		return -EINVAL;
++
++	size = min_t(size_t, to->len - tooff, from->len - fromoff);
++	if (size == 0)
+ 		return -EINVAL;
+ 	size *= sizeof(u16);
+ 
+@@ -187,17 +189,19 @@
+ 
+ int fb_cmap_to_user(const struct fb_cmap *from, struct fb_cmap_user *to)
+ {
+-	int tooff = 0, fromoff = 0;
+-	int size;
++	unsigned int tooff = 0, fromoff = 0;
++	size_t size;
+ 
+ 	if (to->start > from->start)
+ 		fromoff = to->start - from->start;
+ 	else
+ 		tooff = from->start - to->start;
+-	size = to->len - tooff;
+-	if (size > (int) (from->len - fromoff))
+-		size = from->len - fromoff;
+-	if (size <= 0)
++
++	if (fromoff >= from->len || tooff >= to->len)
++		return -EINVAL;
++
++	size = min_t(size_t, to->len - tooff, from->len - fromoff);
++	if (size == 0)
+ 		return -EINVAL;
+ 	size *= sizeof(u16);
+ 
+diff -Naur linux.old/fs/cifs/sess.c linux/fs/cifs/sess.c
+--- linux.old/fs/cifs/sess.c	2020-04-21 14:01:23.177637014 +0800
++++ linux/fs/cifs/sess.c	2020-04-21 14:26:00.156505477 +0800
+@@ -343,13 +343,12 @@
+ 	/* BB is NTLMV2 session security format easier to use here? */
+ 	flags = NTLMSSP_NEGOTIATE_56 |	NTLMSSP_REQUEST_TARGET |
+ 		NTLMSSP_NEGOTIATE_128 | NTLMSSP_NEGOTIATE_UNICODE |
+-		NTLMSSP_NEGOTIATE_NTLM | NTLMSSP_NEGOTIATE_EXTENDED_SEC;
+-	if (ses->server->sign) {
++		NTLMSSP_NEGOTIATE_NTLM | NTLMSSP_NEGOTIATE_EXTENDED_SEC |
++		NTLMSSP_NEGOTIATE_SEAL;
++	if (ses->server->sign)
+ 		flags |= NTLMSSP_NEGOTIATE_SIGN;
+-		if (!ses->server->session_estab ||
+-				ses->ntlmssp->sesskey_per_smbsess)
+-			flags |= NTLMSSP_NEGOTIATE_KEY_XCH;
+-	}
++	if (!ses->server->session_estab || ses->ntlmssp->sesskey_per_smbsess)
++		flags |= NTLMSSP_NEGOTIATE_KEY_XCH;
+ 
+ 	sec_blob->NegotiateFlags = cpu_to_le32(flags);
+ 
+@@ -382,13 +381,12 @@
+ 	flags = NTLMSSP_NEGOTIATE_56 |
+ 		NTLMSSP_REQUEST_TARGET | NTLMSSP_NEGOTIATE_TARGET_INFO |
+ 		NTLMSSP_NEGOTIATE_128 | NTLMSSP_NEGOTIATE_UNICODE |
+-		NTLMSSP_NEGOTIATE_NTLM | NTLMSSP_NEGOTIATE_EXTENDED_SEC;
+-	if (ses->server->sign) {
++		NTLMSSP_NEGOTIATE_NTLM | NTLMSSP_NEGOTIATE_EXTENDED_SEC |
++		NTLMSSP_NEGOTIATE_SEAL;
++	if (ses->server->sign) 
+ 		flags |= NTLMSSP_NEGOTIATE_SIGN;
+-		if (!ses->server->session_estab ||
+-				ses->ntlmssp->sesskey_per_smbsess)
+-			flags |= NTLMSSP_NEGOTIATE_KEY_XCH;
+-	}
++	if (!ses->server->session_estab || ses->ntlmssp->sesskey_per_smbsess)
++		flags |= NTLMSSP_NEGOTIATE_KEY_XCH;
+ 
+ 	tmp = pbuffer + sizeof(AUTHENTICATE_MESSAGE);
+ 	sec_blob->NegotiateFlags = cpu_to_le32(flags);
+diff -Naur linux.old/fs/cifs/smb2pdu.c linux/fs/cifs/smb2pdu.c
+--- linux.old/fs/cifs/smb2pdu.c	2020-04-21 14:01:23.177637014 +0800
++++ linux/fs/cifs/smb2pdu.c	2020-04-21 14:27:39.532924199 +0800
+@@ -560,6 +560,7 @@
+ 	 */
+ 	kfree(ses->auth_key.response);
+ 	ses->auth_key.response = NULL;
++	ses->auth_key.len = 0;
+ 
+ 	/*
+ 	 * If memory allocation is successful, caller of this function
+@@ -718,15 +719,14 @@
+ 
+ 	if (!rc) {
+ 		mutex_lock(&server->srv_mutex);
+-		if (server->sign && server->ops->generate_signingkey) {
++		if (ses->server->ops->generate_signingkey) {
+ 			rc = server->ops->generate_signingkey(ses);
+-			kfree(ses->auth_key.response);
+-			ses->auth_key.response = NULL;
++			ses->auth_key.len = 0;
+ 			if (rc) {
+ 				cifs_dbg(FYI,
+ 					"SMB3 session key generation failed\n");
+ 				mutex_unlock(&server->srv_mutex);
+-				goto keygen_exit;
++				return rc;
+ 			}
+ 		}
+ 		if (!server->session_estab) {
+@@ -742,11 +742,6 @@
+ 		spin_unlock(&GlobalMid_Lock);
+ 	}
+ 
+-keygen_exit:
+-	if (!server->sign) {
+-		kfree(ses->auth_key.response);
+-		ses->auth_key.response = NULL;
+-	}
+ 	kfree(ses->ntlmssp);
+ 
+ 	return rc;
+diff -Naur linux.old/fs/ext4/balloc.c linux/fs/ext4/balloc.c
+--- linux.old/fs/ext4/balloc.c	2020-04-21 14:01:23.177637014 +0800
++++ linux/fs/ext4/balloc.c	2020-04-21 15:28:47.471637134 +0800
+@@ -427,7 +427,16 @@
+ 		goto verify;
+ 	}
+ 	ext4_lock_group(sb, block_group);
+-	if (desc->bg_flags & cpu_to_le16(EXT4_BG_BLOCK_UNINIT)) {
++	if (ext4_has_group_desc_csum(sb) &&
++		(desc->bg_flags & cpu_to_le16(EXT4_BG_BLOCK_UNINIT))) {
++		if (block_group == 0) {
++			ext4_unlock_group(sb, block_group);
++			unlock_buffer(bh);
++			ext4_error(sb, "Block bitmap for bg 0 marked "
++				   "uninitialized");
++			put_bh(bh);
++			return NULL;
++		}
+ 		ext4_init_block_bitmap(sb, bh, block_group, desc);
+ 		set_bitmap_uptodate(bh);
+ 		set_buffer_uptodate(bh);
+diff -Naur linux.old/fs/ext4/ext4.h linux/fs/ext4/ext4.h
+--- linux.old/fs/ext4/ext4.h	2020-04-21 14:01:23.181637015 +0800
++++ linux/fs/ext4/ext4.h	2020-04-21 15:36:01.921078383 +0800
+@@ -1352,11 +1352,6 @@
+ static inline int ext4_valid_inum(struct super_block *sb, unsigned long ino)
+ {
+ 	return ino == EXT4_ROOT_INO ||
+-		ino == EXT4_USR_QUOTA_INO ||
+-		ino == EXT4_GRP_QUOTA_INO ||
+-		ino == EXT4_BOOT_LOADER_INO ||
+-		ino == EXT4_JOURNAL_INO ||
+-		ino == EXT4_RESIZE_INO ||
+ 		(ino >= EXT4_FIRST_INO(sb) &&
+ 		 ino <= le32_to_cpu(EXT4_SB(sb)->s_es->s_inodes_count));
+ }
+@@ -2636,9 +2631,6 @@
+ extern int ext4_inline_data_fiemap(struct inode *inode,
+ 				   struct fiemap_extent_info *fieinfo,
+ 				   int *has_inline);
+-extern int ext4_try_to_evict_inline_data(handle_t *handle,
+-					 struct inode *inode,
+-					 int needed);
+ extern void ext4_inline_data_truncate(struct inode *inode, int *has_inline);
+ 
+ extern int ext4_convert_inline_data(struct inode *inode);
+diff -Naur linux.old/fs/ext4/ialloc.c linux/fs/ext4/ialloc.c
+--- linux.old/fs/ext4/ialloc.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/fs/ext4/ialloc.c	2020-04-21 15:30:14.768534864 +0800
+@@ -146,7 +146,16 @@
+ 	}
+ 
+ 	ext4_lock_group(sb, block_group);
+-	if (desc->bg_flags & cpu_to_le16(EXT4_BG_INODE_UNINIT)) {
++	if (ext4_has_group_desc_csum(sb) &&
++		(desc->bg_flags & cpu_to_le16(EXT4_BG_INODE_UNINIT))) {
++		if (block_group == 0) {
++			ext4_unlock_group(sb, block_group);
++			unlock_buffer(bh);
++			ext4_error(sb, "Inode bitmap for bg 0 marked "
++				   "uninitialized");
++			put_bh(bh);
++			return NULL;
++		}
+ 		ext4_init_inode_bitmap(sb, bh, block_group, desc);
+ 		set_bitmap_uptodate(bh);
+ 		set_buffer_uptodate(bh);
+@@ -884,7 +893,8 @@
+ 
+ 		/* recheck and clear flag under lock if we still need to */
+ 		ext4_lock_group(sb, group);
+-		if (gdp->bg_flags & cpu_to_le16(EXT4_BG_BLOCK_UNINIT)) {
++		if (ext4_has_group_desc_csum(sb) &&
++			(gdp->bg_flags & cpu_to_le16(EXT4_BG_BLOCK_UNINIT))) {
+ 			gdp->bg_flags &= cpu_to_le16(~EXT4_BG_BLOCK_UNINIT);
+ 			ext4_free_group_clusters_set(sb, gdp,
+ 				ext4_free_clusters_after_init(sb, group, gdp));
+diff -Naur linux.old/fs/ext4/inline.c linux/fs/ext4/inline.c
+--- linux.old/fs/ext4/inline.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/fs/ext4/inline.c	2020-04-21 14:14:13.623861973 +0800
+@@ -874,11 +874,11 @@
+ 	}
+ 
+ 	if (ret == -ENOSPC) {
++		ext4_journal_stop(handle);
+ 		ret = ext4_da_convert_inline_data_to_extent(mapping,
+ 							    inode,
+ 							    flags,
+ 							    fsdata);
+-		ext4_journal_stop(handle);
+ 		if (ret == -ENOSPC &&
+ 		    ext4_should_retry_alloc(inode->i_sb, &retries))
+ 			goto retry_journal;
+@@ -1829,42 +1829,6 @@
+ 	return (error < 0 ? error : 0);
+ }
+ 
+-/*
+- * Called during xattr set, and if we can sparse space 'needed',
+- * just create the extent tree evict the data to the outer block.
+- *
+- * We use jbd2 instead of page cache to move data to the 1st block
+- * so that the whole transaction can be committed as a whole and
+- * the data isn't lost because of the delayed page cache write.
+- */
+-int ext4_try_to_evict_inline_data(handle_t *handle,
+-				  struct inode *inode,
+-				  int needed)
+-{
+-	int error;
+-	struct ext4_xattr_entry *entry;
+-	struct ext4_inode *raw_inode;
+-	struct ext4_iloc iloc;
+-
+-	error = ext4_get_inode_loc(inode, &iloc);
+-	if (error)
+-		return error;
+-
+-	raw_inode = ext4_raw_inode(&iloc);
+-	entry = (struct ext4_xattr_entry *)((void *)raw_inode +
+-					    EXT4_I(inode)->i_inline_off);
+-	if (EXT4_XATTR_LEN(entry->e_name_len) +
+-	    EXT4_XATTR_SIZE(le32_to_cpu(entry->e_value_size)) < needed) {
+-		error = -ENOSPC;
+-		goto out;
+-	}
+-
+-	error = ext4_convert_inline_data_nolock(handle, inode, &iloc);
+-out:
+-	brelse(iloc.bh);
+-	return error;
+-}
+-
+ void ext4_inline_data_truncate(struct inode *inode, int *has_inline)
+ {
+ 	handle_t *handle;
+diff -Naur linux.old/fs/ext4/inode.c linux/fs/ext4/inode.c
+--- linux.old/fs/ext4/inode.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/fs/ext4/inode.c	2020-04-21 15:42:14.638273642 +0800
+@@ -3807,7 +3807,8 @@
+ 	int			inodes_per_block, inode_offset;
+ 
+ 	iloc->bh = NULL;
+-	if (!ext4_valid_inum(sb, inode->i_ino))
++	if (inode->i_ino < EXT4_ROOT_INO ||
++	    inode->i_ino > le32_to_cpu(EXT4_SB(sb)->s_es->s_inodes_count))
+ 		return -EIO;
+ 
+ 	iloc->block_group = (inode->i_ino - 1) / EXT4_INODES_PER_GROUP(sb);
+diff -Naur linux.old/fs/ext4/mballoc.c linux/fs/ext4/mballoc.c
+--- linux.old/fs/ext4/mballoc.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/fs/ext4/mballoc.c	2020-04-21 15:33:56.959888137 +0800
+@@ -2389,7 +2389,8 @@
+ 	 * initialize bb_free to be able to skip
+ 	 * empty groups without initialization
+ 	 */
+-	if (desc->bg_flags & cpu_to_le16(EXT4_BG_BLOCK_UNINIT)) {
++	if (ext4_has_group_desc_csum(sb) &&
++		(desc->bg_flags & cpu_to_le16(EXT4_BG_BLOCK_UNINIT))) {
+ 		meta_group_info[i]->bb_free =
+ 			ext4_free_clusters_after_init(sb, group, desc);
+ 	} else {
+@@ -2914,7 +2915,8 @@
+ #endif
+ 	ext4_set_bits(bitmap_bh->b_data, ac->ac_b_ex.fe_start,
+ 		      ac->ac_b_ex.fe_len);
+-	if (gdp->bg_flags & cpu_to_le16(EXT4_BG_BLOCK_UNINIT)) {
++	if (ext4_has_group_desc_csum(sb) &&
++		(gdp->bg_flags & cpu_to_le16(EXT4_BG_BLOCK_UNINIT))) {
+ 		gdp->bg_flags &= cpu_to_le16(~EXT4_BG_BLOCK_UNINIT);
+ 		ext4_free_group_clusters_set(sb, gdp,
+ 					     ext4_free_clusters_after_init(sb,
+diff -Naur linux.old/fs/ext4/super.c linux/fs/ext4/super.c
+--- linux.old/fs/ext4/super.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/fs/ext4/super.c	2020-04-21 15:49:14.604753647 +0800
+@@ -3052,13 +3052,22 @@
+ 	ext4_group_t group, ngroups = EXT4_SB(sb)->s_groups_count;
+ 	struct ext4_group_desc *gdp = NULL;
+ 
++	if (!ext4_has_group_desc_csum(sb))
++		return ngroups;
++
+ 	for (group = 0; group < ngroups; group++) {
+ 		gdp = ext4_get_group_desc(sb, group, NULL);
+ 		if (!gdp)
+ 			continue;
+ 
+-		if (!(gdp->bg_flags & cpu_to_le16(EXT4_BG_INODE_ZEROED)))
++		if (gdp->bg_flags & cpu_to_le16(EXT4_BG_INODE_ZEROED))
++			continue;
++		if (group != 0)
+ 			break;
++		ext4_error(sb, "Inode table for bg 0 marked as "
++			   "needing zeroing");
++		if (sb->s_flags & MS_RDONLY)
++			return ngroups;
+ 	}
+ 
+ 	return group;
+@@ -3670,6 +3679,11 @@
+ 	} else {
+ 		sbi->s_inode_size = le16_to_cpu(es->s_inode_size);
+ 		sbi->s_first_ino = le32_to_cpu(es->s_first_ino);
++		if (sbi->s_first_ino < EXT4_GOOD_OLD_FIRST_INO) {
++			ext4_msg(sb, KERN_ERR, "invalid first ino: %u",
++				 sbi->s_first_ino);
++			goto failed_mount;
++		}
+ 		if ((sbi->s_inode_size < EXT4_GOOD_OLD_INODE_SIZE) ||
+ 		    (!is_power_of_2(sbi->s_inode_size)) ||
+ 		    (sbi->s_inode_size > blocksize)) {
+diff -Naur linux.old/fs/ext4/xattr.c linux/fs/ext4/xattr.c
+--- linux.old/fs/ext4/xattr.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/fs/ext4/xattr.c	2020-04-21 14:14:59.608177779 +0800
+@@ -1007,22 +1007,8 @@
+ 	if (EXT4_I(inode)->i_extra_isize == 0)
+ 		return -ENOSPC;
+ 	error = ext4_xattr_set_entry(i, s);
+-	if (error) {
+-		if (error == -ENOSPC &&
+-		    ext4_has_inline_data(inode)) {
+-			error = ext4_try_to_evict_inline_data(handle, inode,
+-					EXT4_XATTR_LEN(strlen(i->name) +
+-					EXT4_XATTR_SIZE(i->value_len)));
+-			if (error)
+-				return error;
+-			error = ext4_xattr_ibody_find(inode, i, is);
+-			if (error)
+-				return error;
+-			error = ext4_xattr_set_entry(i, s);
+-		}
+-		if (error)
+-			return error;
+-	}
++	if (error)
++		return error;
+ 	header = IHDR(inode, ext4_raw_inode(&is->iloc));
+ 	if (!IS_LAST_ENTRY(s->first)) {
+ 		header->h_magic = cpu_to_le32(EXT4_XATTR_MAGIC);
+diff -Naur linux.old/fs/jbd2/transaction.c linux/fs/jbd2/transaction.c
+--- linux.old/fs/jbd2/transaction.c	2020-04-21 14:01:23.177637014 +0800
++++ linux/fs/jbd2/transaction.c	2020-04-21 14:15:31.399947882 +0800
+@@ -1291,11 +1291,11 @@
+ 		 * of the transaction. This needs to be done
+ 		 * once a transaction -bzzz
+ 		 */
+-		jh->b_modified = 1;
+ 		if (handle->h_buffer_credits <= 0) {
+ 			ret = -ENOSPC;
+ 			goto out_unlock_bh;
+ 		}
++		jh->b_modified = 1;
+ 		handle->h_buffer_credits--;
+ 	}
+ 
+diff -Naur linux.old/include/linux/netdevice.h linux/include/linux/netdevice.h
+--- linux.old/include/linux/netdevice.h	2020-04-21 14:01:23.181637015 +0800
++++ linux/include/linux/netdevice.h	2020-04-21 16:05:04.055736351 +0800
+@@ -998,6 +998,12 @@
+  *	Callback to use for xmit over the accelerated station. This
+  *	is used in place of ndo_start_xmit on accelerated net
+  *	devices.
++ * bool	(*ndo_gso_check) (struct sk_buff *skb,
++ *			  struct net_device *dev);
++ *	Called by core transmit path to determine if device is capable of
++ *	performing GSO on a packet. The device returns true if it is
++ *	able to GSO the packet, false otherwise. If the return value is
++ *	false the stack will do software GSO.
+  */
+ struct net_device_ops {
+ 	int			(*ndo_init)(struct net_device *dev);
+@@ -1146,6 +1152,8 @@
+ 							struct net_device *dev,
+ 							void *priv);
+ 	int			(*ndo_get_lock_subclass)(struct net_device *dev);
++	bool			(*ndo_gso_check) (struct sk_buff *skb,
++						  struct net_device *dev);
+ };
+ 
+ /*
+@@ -3140,10 +3148,12 @@
+ 	       (!skb_has_frag_list(skb) || (features & NETIF_F_FRAGLIST));
+ }
+ 
+-static inline bool netif_needs_gso(struct sk_buff *skb,
++static inline bool netif_needs_gso(struct net_device *dev, struct sk_buff *skb,
+ 				   netdev_features_t features)
+ {
+ 	return skb_is_gso(skb) && (!skb_gso_ok(skb, features) ||
++		(dev->netdev_ops->ndo_gso_check &&
++		 !dev->netdev_ops->ndo_gso_check(skb, dev)) ||
+ 		unlikely((skb->ip_summed != CHECKSUM_PARTIAL) &&
+ 			 (skb->ip_summed != CHECKSUM_UNNECESSARY)));
+ }
+diff -Naur linux.old/include/linux/skbuff.h linux/include/linux/skbuff.h
+--- linux.old/include/linux/skbuff.h	2020-04-21 14:01:23.181637015 +0800
++++ linux/include/linux/skbuff.h	2020-04-21 16:00:36.896153436 +0800
+@@ -2454,6 +2454,7 @@
+ void skb_scrub_packet(struct sk_buff *skb, bool xnet);
+ unsigned int skb_gso_transport_seglen(const struct sk_buff *skb);
+ struct sk_buff *skb_segment(struct sk_buff *skb, netdev_features_t features);
++bool skb_gso_validate_mac_len(const struct sk_buff *skb, unsigned int len);
+ 
+ struct skb_checksum_ops {
+ 	__wsum (*update)(const void *mem, int len, __wsum wsum);
+@@ -2932,5 +2933,21 @@
+ 			       skb_network_header(skb);
+ 	return hdr_len + skb_gso_transport_seglen(skb);
+ }
++
++/**
++ * skb_gso_mac_seglen - Return length of individual segments of a gso packet
++ *
++ * @skb: GSO skb
++ *
++ * skb_gso_mac_seglen is used to determine the real size of the
++ * individual segments, including MAC/L2, Layer3 (IP, IPv6) and L4
++ * headers (TCP/UDP).
++ */
++static inline unsigned int skb_gso_mac_seglen(const struct sk_buff *skb)
++{
++	unsigned int hdr_len = skb_transport_header(skb) - skb_mac_header(skb);
++	return hdr_len + skb_gso_transport_seglen(skb);
++}
++
+ #endif	/* __KERNEL__ */
+ #endif	/* _LINUX_SKBUFF_H */
+diff -Naur linux.old/include/linux/sunrpc/svc.h linux/include/linux/sunrpc/svc.h
+--- linux.old/include/linux/sunrpc/svc.h	2020-04-21 14:01:23.181637015 +0800
++++ linux/include/linux/sunrpc/svc.h	2020-04-21 14:31:48.548268973 +0800
+@@ -277,9 +277,10 @@
+ 						 * cache pages */
+ 	wait_queue_head_t	rq_wait;	/* synchronization */
+ 	struct task_struct	*rq_task;	/* service thread */
++	struct net *rq_bc_net; /* pointer to backchannel's net namespace */
+ };
+ 
+-#define SVC_NET(svc_rqst)	(svc_rqst->rq_xprt->xpt_net)
++#define SVC_NET(rqst) (rqst->rq_xprt ? rqst->rq_xprt->xpt_net : rqst->rq_bc_net)
+ 
+ /*
+  * Rigorous type checking on sockaddr type conversions
+diff -Naur linux.old/include/linux/usb.h linux/include/linux/usb.h
+--- linux.old/include/linux/usb.h	2020-04-21 14:01:23.181637015 +0800
++++ linux/include/linux/usb.h	2020-04-21 14:46:17.850228447 +0800
+@@ -304,11 +304,11 @@
+ };
+ 
+ int __usb_get_extra_descriptor(char *buffer, unsigned size,
+-	unsigned char type, void **ptr);
++	unsigned char type, void **ptr, size_t min);
+ #define usb_get_extra_descriptor(ifpoint, type, ptr) \
+ 				__usb_get_extra_descriptor((ifpoint)->extra, \
+ 				(ifpoint)->extralen, \
+-				type, (void **)ptr)
++				type, (void **)ptr, sizeof(**(ptr)))
+ 
+ /* ----------------------------------------------------------------------- */
+ 
+diff -Naur linux.old/include/trace/events/sunrpc.h linux/include/trace/events/sunrpc.h
+--- linux.old/include/trace/events/sunrpc.h	2020-04-21 14:01:23.181637015 +0800
++++ linux/include/trace/events/sunrpc.h	2020-04-21 14:32:41.834367975 +0800
+@@ -20,12 +20,16 @@
+ 		__field(unsigned int, task_id)
+ 		__field(unsigned int, client_id)
+ 		__field(int, status)
++		__string(addr, rqst->rq_xprt ? 
++			rqst->rq_xprt->xpt_remotebuf : "(null)")
+ 	),
+ 
+ 	TP_fast_assign(
+ 		__entry->task_id = task->tk_pid;
+ 		__entry->client_id = task->tk_client->cl_clid;
+ 		__entry->status = task->tk_status;
++		__assign_str(addr, rqst->rq_xprt ?
++			rqst->rq_xprt->xpt_remotebuf : "(null)");
+ 	),
+ 
+ 	TP_printk("task:%u@%u, status %d",
+diff -Naur linux.old/kernel/futex.c linux/kernel/futex.c
+--- linux.old/kernel/futex.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/kernel/futex.c	2020-04-21 14:59:13.659819524 +0800
+@@ -378,6 +378,7 @@
+ 	unsigned long address = (unsigned long)uaddr;
+ 	struct mm_struct *mm = current->mm;
+ 	struct page *page, *page_head;
++	struct address_space *mapping;
+ 	int err, ro = 0;
+ 
+ 	/*
+@@ -456,7 +457,19 @@
+ 	}
+ #endif
+ 
+-	lock_page(page_head);
++	/*
++	 * The treatment of mapping from this point on is critical. The page
++	 * lock protects many things but in this context the page lock
++	 * stabilizes mapping, prevents inode freeing in the shared
++	 * file-backed region case and guards against movement to swap cache.
++	 *
++	 * Strictly speaking the page lock is not needed in all cases being
++	 * considered here and page lock forces unnecessarily serialization
++	 * From this point on, mapping will be re-verified if necessary and
++	 * page lock will be acquired only if it is unavoidable
++	 */
++
++	mapping = ACCESS_ONCE(page_head->mapping);
+ 
+ 	/*
+ 	 * If page_head->mapping is NULL, then it cannot be a PageAnon
+@@ -473,8 +486,16 @@
+ 	 * shmem_writepage move it from filecache to swapcache beneath us:
+ 	 * an unlikely race, but we do need to retry for page_head->mapping.
+ 	 */
+-	if (!page_head->mapping) {
+-		int shmem_swizzled = PageSwapCache(page_head);
++	if (unlikely(!mapping)) {
++		int shmem_swizzled;
++
++		/*
++		 * Page lock is required to identify which special case above
++		 * applies. If this is really a shmem page then the page lock
++		 * will prevent unexpected transitions.
++		 */
++		lock_page(page);
++		shmem_swizzled = PageSwapCache(page) || page->mapping;
+ 		unlock_page(page_head);
+ 		put_page(page_head);
+ 		if (shmem_swizzled)
+@@ -485,6 +506,9 @@
+ 	/*
+ 	 * Private mappings are handled in a simple way.
+ 	 *
++	 * If the futex key is stored on an anonymous page, then the associated
++	 * object is the mm which is implicitly pinned by the calling process.
++	 *
+ 	 * NOTE: When userspace waits on a MAP_SHARED mapping, even if
+ 	 * it's a read-only handle, it's expected that futexes attach to
+ 	 * the object not the particular process.
+@@ -502,16 +526,72 @@
+ 		key->both.offset |= FUT_OFF_MMSHARED; /* ref taken on mm */
+ 		key->private.mm = mm;
+ 		key->private.address = address;
++		get_futex_key_refs(key); /* implies smp_mb(); (B) */
+ 	} else {
++		struct inode *inode;
++
++		/*
++		 * The associated futex object in this case is the inode and
++		 * the page->mapping must be traversed. Ordinarily this should
++		 * be stabilised under page lock but it's not strictly
++		 * necessary in this case as we just want to pin the inode, not
++		 * update the radix tree or anything like that.
++		 *
++		 * The RCU read lock is taken as the inode is finally freed
++		 * under RCU. If the mapping still matches expectations then the
++		 * mapping->host can be safely accessed as being a valid inode.
++		 */
++		rcu_read_lock();
++
++		if (ACCESS_ONCE(page_head->mapping) != mapping) {
++			rcu_read_unlock();
++			put_page(page_head);
++
++			goto again;
++		}
++
++		inode = ACCESS_ONCE(mapping->host);
++		if (!inode) {
++			rcu_read_unlock();
++			put_page(page_head);
++
++			goto again;
++		}
++
++		/*
++		 * Take a reference unless it is about to be freed. Previously
++		 * this reference was taken by ihold under the page lock
++		 * pinning the inode in place so i_lock was unnecessary. The
++		 * only way for this check to fail is if the inode was
++		 * truncated in parallel so warn for now if this happens.
++		 *
++		 * We are not calling into get_futex_key_refs() in file-backed
++		 * cases, therefore a successful atomic_inc return below will
++		 * guarantee that get_futex_key() will still imply smp_mb(); (B).
++		 */
++		if (WARN_ON_ONCE(!atomic_inc_not_zero(&inode->i_count))) {
++			rcu_read_unlock();
++			put_page(page_head);
++
++			goto again;
++		}
++
++		/* Should be impossible but lets be paranoid for now */
++		if (WARN_ON_ONCE(inode->i_mapping != mapping)) {
++			err = -EFAULT;
++			rcu_read_unlock();
++			iput(inode);
++
++			goto out;
++		}
++
+ 		key->both.offset |= FUT_OFF_INODE; /* inode-based key */
+-		key->shared.inode = page_head->mapping->host;
++		key->shared.inode = inode;
+ 		key->shared.pgoff = basepage_index(page);
++		rcu_read_unlock();
+ 	}
+ 
+-	get_futex_key_refs(key); /* implies MB (B) */
+-
+ out:
+-	unlock_page(page_head);
+ 	put_page(page_head);
+ 	return err;
+ }
+diff -Naur linux.old/kernel/posix-timers.c linux/kernel/posix-timers.c
+--- linux.old/kernel/posix-timers.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/kernel/posix-timers.c	2020-04-21 14:08:54.774831609 +0800
+@@ -498,17 +498,22 @@
+ {
+ 	struct task_struct *rtn = current->group_leader;
+ 
+-	if ((event->sigev_notify & SIGEV_THREAD_ID ) &&
+-		(!(rtn = find_task_by_vpid(event->sigev_notify_thread_id)) ||
+-		 !same_thread_group(rtn, current) ||
+-		 (event->sigev_notify & ~SIGEV_THREAD_ID) != SIGEV_SIGNAL))
++	switch (event->sigev_notify) {
++	case SIGEV_SIGNAL | SIGEV_THREAD_ID:
++		rtn = find_task_by_vpid(event->sigev_notify_thread_id);
++		if (!rtn || !same_thread_group(rtn, current))
++			return NULL;
++		/* FALLTHRU */
++	case SIGEV_SIGNAL:
++	case SIGEV_THREAD:
++		if (event->sigev_signo <= 0 || event->sigev_signo > SIGRTMAX)
++			return NULL;
++		/* FALLTHRU */
++	case SIGEV_NONE:
++		return task_pid(rtn);
++	default:
+ 		return NULL;
+-
+-	if (((event->sigev_notify & ~SIGEV_THREAD_ID) != SIGEV_NONE) &&
+-	    ((event->sigev_signo <= 0) || (event->sigev_signo > SIGRTMAX)))
+-		return NULL;
+-
+-	return task_pid(rtn);
++	}
+ }
+ 
+ void posix_timers_register_clock(const clockid_t clock_id,
+diff -Naur linux.old/mm/mmap.c linux/mm/mmap.c
+--- linux.old/mm/mmap.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/mm/mmap.c	2020-04-21 15:50:16.194760838 +0800
+@@ -2202,7 +2202,7 @@
+ {
+ 	struct vm_area_struct *prev;
+ 	unsigned long gap_addr;	
+- 	int error;
++ 	int error = 0;
+  
+ 	/* Enforce stack_guard_gap */
+ 	gap_addr = address - stack_guard_gap;
+diff -Naur linux.old/net/core/dev.c linux/net/core/dev.c
+--- linux.old/net/core/dev.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/net/core/dev.c	2020-04-21 16:05:30.812007861 +0800
+@@ -2594,7 +2594,7 @@
+ 		if (skb->encapsulation)
+ 			features &= dev->hw_enc_features;
+ 
+-		if (netif_needs_gso(skb, features)) {
++		if (netif_needs_gso(dev, skb, features)) {
+ 			if (unlikely(dev_gso_segment(skb, features)))
+ 				goto out_kfree_skb;
+ 			if (skb->next)
+diff -Naur linux.old/net/core/skbuff.c linux/net/core/skbuff.c
+--- linux.old/net/core/skbuff.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/net/core/skbuff.c	2020-04-21 16:01:36.268562574 +0800
+@@ -3963,3 +3963,43 @@
+ 	return shinfo->gso_size;
+ }
+ EXPORT_SYMBOL_GPL(skb_gso_transport_seglen);
++
++/*
++ * skb_gso_size_check - check the skb size
++ *
++ * There are a couple of instances where we have a GSO skb, and we
++ * want to determine what size it would be after it is segmented.
++ *
++ * We might want to check:
++ * -    L3+L4+payload size (e.g. IP forwarding)
++ * - L2+L3+L4+payload size (e.g. sanity check before passing to driver)
++ *
++ * @seg_len: The segmented length (from skb_gso_*_seglen).
++ *
++ * @max_len: The maximum permissible length.
++ *
++ * Returns true if the segmented length <= max length.
++ *
++ * In upstream this has to consider GSO_BY_FRAGS, but not in this
++ * backport.
++ */
++static inline bool skb_gso_size_check(const struct sk_buff *skb,
++				      unsigned int seg_len,
++				      unsigned int max_len) {
++	return seg_len <= max_len;
++}
++
++/**
++ * skb_gso_validate_mac_len - Will a split GSO skb fit in a given length?
++ *
++ * @skb: GSO skb
++ * @len: length to validate against
++ *
++ * skb_gso_validate_mac_len validates if a given skb will fit a wanted
++ * length once split, including L2, L3 and L4 headers and the payload.
++ */
++bool skb_gso_validate_mac_len(const struct sk_buff *skb, unsigned int len)
++{
++	return skb_gso_size_check(skb, skb_gso_mac_seglen(skb), len);
++}
++EXPORT_SYMBOL_GPL(skb_gso_validate_mac_len);
+diff -Naur linux.old/net/core/sock.c linux/net/core/sock.c
+--- linux.old/net/core/sock.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/net/core/sock.c	2020-04-21 14:59:45.520151804 +0800
+@@ -1485,6 +1485,8 @@
+ 
+ 		sock_copy(newsk, sk);
+ 
++		newsk->sk_prot_creator = sk->sk_prot;
++
+ 		/* SANITY */
+ 		get_net(sock_net(newsk));
+ 		sk_node_init(&newsk->sk_node);
+diff -Naur linux.old/net/ipv6/ip6_gre.c linux/net/ipv6/ip6_gre.c
+--- linux.old/net/ipv6/ip6_gre.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/net/ipv6/ip6_gre.c	2020-04-21 14:55:41.664857141 +0800
+@@ -55,6 +55,7 @@
+ #include <net/ip6_fib.h>
+ #include <net/ip6_route.h>
+ #include <net/ip6_tunnel.h>
++#include <net/gre.h>
+ 
+ 
+ static bool log_ecn_error = true;
+@@ -364,33 +365,35 @@
+ static void ip6gre_err(struct sk_buff *skb, struct inet6_skb_parm *opt,
+ 		u8 type, u8 code, int offset, __be32 info)
+ {
+-	const struct ipv6hdr *ipv6h = (const struct ipv6hdr *)skb->data;
+-	__be16 *p = (__be16 *)(skb->data + offset);
+-	int grehlen = offset + 4;
++	const struct gre_base_hdr *greh;	
++	const struct ipv6hdr *ipv6h;
++	int grehlen = sizeof(*greh);
+ 	struct ip6_tnl *t;
++	int key_off = 0;
+ 	__be16 flags;
+-
+-	flags = p[0];
+-	if (flags&(GRE_CSUM|GRE_KEY|GRE_SEQ|GRE_ROUTING|GRE_VERSION)) {
+-		if (flags&(GRE_VERSION|GRE_ROUTING))
+-			return;
+-		if (flags&GRE_KEY) {
+-			grehlen += 4;
+-			if (flags&GRE_CSUM)
+-				grehlen += 4;
+-		}
++	__be32 key;
++ 
++	if (!pskb_may_pull(skb, offset + grehlen))
++		return;
++	greh = (const struct gre_base_hdr *)(skb->data + offset);
++	flags = greh->flags;
++	if (flags & (GRE_VERSION | GRE_ROUTING))
++		return;
++	if (flags & GRE_CSUM)
++		grehlen += 4;
++	if (flags & GRE_KEY) {
++		key_off = grehlen + offset;
++		grehlen += 4;
+ 	}
+ 
+-	/* If only 8 bytes returned, keyed message will be dropped here */
+-	if (!pskb_may_pull(skb, grehlen))
++	if (!pskb_may_pull(skb, offset + grehlen))
+ 		return;
+ 	ipv6h = (const struct ipv6hdr *)skb->data;
+-	p = (__be16 *)(skb->data + offset);
++	greh = (const struct gre_base_hdr *)(skb->data + offset);
++	key = key_off ? *(__be32 *)(skb->data + key_off) : 0;
+ 
+ 	t = ip6gre_tunnel_lookup(skb->dev, &ipv6h->daddr, &ipv6h->saddr,
+-				flags & GRE_KEY ?
+-				*(((__be32 *)p) + (grehlen / 4) - 1) : 0,
+-				p[1]);
++				key, greh->protocol);
+ 	if (t == NULL)
+ 		return;
+ 
+diff -Naur linux.old/net/sched/sch_tbf.c linux/net/sched/sch_tbf.c
+--- linux.old/net/sched/sch_tbf.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/net/sched/sch_tbf.c	2020-04-21 16:02:03.774885020 +0800
+@@ -143,16 +143,6 @@
+ 	return len;
+ }
+ 
+-/*
+- * Return length of individual segments of a gso packet,
+- * including all headers (MAC, IP, TCP/UDP)
+- */
+-static unsigned int skb_gso_mac_seglen(const struct sk_buff *skb)
+-{
+-	unsigned int hdr_len = skb_transport_header(skb) - skb_mac_header(skb);
+-	return hdr_len + skb_gso_transport_seglen(skb);
+-}
+-
+ /* GSO packet is too big, segment it so that tbf can transmit
+  * each segment in time
+  */
+diff -Naur linux.old/net/sunrpc/auth_gss/svcauth_gss.c linux/net/sunrpc/auth_gss/svcauth_gss.c
+--- linux.old/net/sunrpc/auth_gss/svcauth_gss.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/net/sunrpc/auth_gss/svcauth_gss.c	2020-04-21 14:41:39.060756422 +0800
+@@ -1102,7 +1102,7 @@
+ 	struct kvec *resv = &rqstp->rq_res.head[0];
+ 	struct rsi *rsip, rsikey;
+ 	int ret;
+-	struct sunrpc_net *sn = net_generic(rqstp->rq_xprt->xpt_net, sunrpc_net_id);
++	struct sunrpc_net *sn = net_generic(SVC_NET(rqstp), sunrpc_net_id);
+ 
+ 	memset(&rsikey, 0, sizeof(rsikey));
+ 	ret = gss_read_verf(gc, argv, authp,
+@@ -1213,7 +1213,7 @@
+ 	uint64_t handle;
+ 	int status;
+ 	int ret;
+-	struct net *net = rqstp->rq_xprt->xpt_net;
++	struct net *net = SVC_NET(rqstp);
+ 	struct sunrpc_net *sn = net_generic(net, sunrpc_net_id);
+ 
+ 	memset(&ud, 0, sizeof(ud));
+@@ -1403,7 +1403,7 @@
+ 	__be32		*rpcstart;
+ 	__be32		*reject_stat = resv->iov_base + resv->iov_len;
+ 	int		ret;
+-	struct sunrpc_net *sn = net_generic(rqstp->rq_xprt->xpt_net, sunrpc_net_id);
++	struct sunrpc_net *sn = net_generic(SVC_NET(rqstp), sunrpc_net_id);
+ 
+ 	dprintk("RPC:       svcauth_gss: argv->iov_len = %zd\n",
+ 			argv->iov_len);
+@@ -1689,7 +1689,7 @@
+ 	struct rpc_gss_wire_cred *gc = &gsd->clcred;
+ 	struct xdr_buf *resbuf = &rqstp->rq_res;
+ 	int stat = -EINVAL;
+-	struct sunrpc_net *sn = net_generic(rqstp->rq_xprt->xpt_net, sunrpc_net_id);
++	struct sunrpc_net *sn = net_generic(SVC_NET(rqstp), sunrpc_net_id);
+ 
+ 	if (gc->gc_proc != RPC_GSS_PROC_DATA)
+ 		goto out;
+diff -Naur linux.old/net/sunrpc/svc.c linux/net/sunrpc/svc.c
+--- linux.old/net/sunrpc/svc.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/net/sunrpc/svc.c	2020-04-21 14:34:16.857384270 +0800
+@@ -33,6 +33,7 @@
+ static void svc_unregister(const struct svc_serv *serv, struct net *net);
+ 
+ #define svc_serv_is_pooled(serv)    ((serv)->sv_function)
++void svc_tcp_prep_reply_hdr(struct svc_rqst *rqstp);
+ 
+ /*
+  * Mode for mapping cpus to pools.
+@@ -1093,6 +1094,8 @@
+ 
+ 	/* Setup reply header */
+ 	rqstp->rq_xprt->xpt_ops->xpo_prep_reply_hdr(rqstp);
++	if (rqstp->rq_prot == IPPROTO_TCP)
++		svc_tcp_prep_reply_hdr(rqstp);
+ 
+ 	svc_putu32(resv, rqstp->rq_xid);
+ 
+@@ -1139,7 +1142,7 @@
+ 	case SVC_DENIED:
+ 		goto err_bad_auth;
+ 	case SVC_CLOSE:
+-		if (test_bit(XPT_TEMP, &rqstp->rq_xprt->xpt_flags))
++		if (rqstp->rq_xprt && test_bit(XPT_TEMP, &rqstp->rq_xprt->xpt_flags))
+ 			svc_close_xprt(rqstp->rq_xprt);
+ 	case SVC_DROP:
+ 		goto dropit;
+@@ -1349,10 +1352,10 @@
+ 	struct kvec	*resv = &rqstp->rq_res.head[0];
+ 
+ 	/* Build the svc_rqst used by the common processing routine */
+-	rqstp->rq_xprt = serv->sv_bc_xprt;
+ 	rqstp->rq_xid = req->rq_xid;
+ 	rqstp->rq_prot = req->rq_xprt->prot;
+ 	rqstp->rq_server = serv;
++	rqstp->rq_bc_net = req->rq_xprt->xprt_net;
+ 
+ 	rqstp->rq_addrlen = sizeof(req->rq_xprt->addr);
+ 	memcpy(&rqstp->rq_addr, &req->rq_xprt->addr, rqstp->rq_addrlen);
+diff -Naur linux.old/net/sunrpc/svcsock.c linux/net/sunrpc/svcsock.c
+--- linux.old/net/sunrpc/svcsock.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/net/sunrpc/svcsock.c	2020-04-21 14:35:28.446344549 +0800
+@@ -1178,7 +1178,7 @@
+ /*
+  * Setup response header. TCP has a 4B record length field.
+  */
+-static void svc_tcp_prep_reply_hdr(struct svc_rqst *rqstp)
++void svc_tcp_prep_reply_hdr(struct svc_rqst *rqstp)
+ {
+ 	struct kvec *resv = &rqstp->rq_res.head[0];
+ 
+diff -Naur linux.old/net/sunrpc/svc_xprt.c linux/net/sunrpc/svc_xprt.c
+--- linux.old/net/sunrpc/svc_xprt.c	2020-04-21 14:01:23.181637015 +0800
++++ linux/net/sunrpc/svc_xprt.c	2020-04-21 14:34:59.403136937 +0800
+@@ -432,10 +432,11 @@
+  */
+ void svc_reserve(struct svc_rqst *rqstp, int space)
+ {
++	struct svc_xprt *xprt = rqstp->rq_xprt;
++
+ 	space += rqstp->rq_res.head[0].iov_len;
+ 
+-	if (space < rqstp->rq_reserved) {
+-		struct svc_xprt *xprt = rqstp->rq_xprt;
++	if (xprt && space < rqstp->rq_reserved) {
+ 		atomic_sub((rqstp->rq_reserved - space), &xprt->xpt_reserved);
+ 		rqstp->rq_reserved = space;
+ 

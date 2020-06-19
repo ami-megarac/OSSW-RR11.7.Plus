@@ -1,0 +1,28 @@
+--- linux/fs/binfmt_elf.c	2014-08-14 09:38:34.000000000 +0800
++++ linux.new/fs/binfmt_elf.c	2017-12-27 14:53:37.977080000 +0800
+@@ -750,6 +750,7 @@
+ 	    i < loc->elf_ex.e_phnum; i++, elf_ppnt++) {
+ 		int elf_prot = 0, elf_flags;
+ 		unsigned long k, vaddr;
++		unsigned long total_size = 0;
+ 
+ 		if (elf_ppnt->p_type != PT_LOAD)
+ 			continue;
+@@ -814,10 +815,16 @@
+ #else
+ 			load_bias = ELF_PAGESTART(ELF_ET_DYN_BASE - vaddr);
+ #endif
++			total_size = total_mapping_size(elf_phdata,
++							loc->elf_ex.e_phnum);
++			if (!total_size) {
++				error = -EINVAL;
++				goto out_free_dentry;
++			}		
+ 		}
+ 
+ 		error = elf_map(bprm->file, load_bias + vaddr, elf_ppnt,
+-				elf_prot, elf_flags, 0);
++				elf_prot, elf_flags, total_size);
+ 		if (BAD_ADDR(error)) {
+ 			send_sig(SIGKILL, current, 0);
+ 			retval = IS_ERR((void *)error) ?

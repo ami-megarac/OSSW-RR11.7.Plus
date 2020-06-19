@@ -1,0 +1,95 @@
+diff -Naur linux.old/fs/proc/task_mmu.c linux/fs/proc/task_mmu.c
+--- linux.old/fs/proc/task_mmu.c	2019-06-25 12:21:29.281579375 +0800
++++ linux/fs/proc/task_mmu.c	2019-06-25 15:20:59.781565483 +0800
+@@ -824,8 +824,27 @@
+ 			.private = &cp,
+ 		};
+ 		down_read(&mm->mmap_sem);
+-		if (type == CLEAR_REFS_SOFT_DIRTY)
+-			mmu_notifier_invalidate_range_start(mm, 0, -1);
++		if (type == CLEAR_REFS_SOFT_DIRTY) {
++                        /*
++                         * Avoid to modify vma->vm_flags
++                         * without locked ops while the
++                         * coredump reads the vm_flags.
++                         */
++                        if (!mmget_still_valid(mm)) {
++                                /*
++                                 * Silently return "count"
++                                 * like if get_task_mm()
++                                 * failed. FIXME: should this
++                                 * function have returned
++                                 * -ESRCH if get_task_mm()
++                                 * failed like if
++                                 * get_proc_task() fails?
++                                 */
++                                up_read(&mm->mmap_sem);
++                                goto out_mm;
++                        }
++                        mmu_notifier_invalidate_range_start(mm, 0, -1);
++                }
+ 		for (vma = mm->mmap; vma; vma = vma->vm_next) {
+ 			cp.vma = vma;
+ 			if (is_vm_hugetlb_page(vma))
+@@ -850,6 +869,7 @@
+ 			mmu_notifier_invalidate_range_end(mm, 0, -1);
+ 		flush_tlb_mm(mm);
+ 		up_read(&mm->mmap_sem);
++out_mm:
+ 		mmput(mm);
+ 	}
+ 	put_task_struct(task);
+diff -Naur linux.old/include/linux/sched.h linux/include/linux/sched.h
+--- linux.old/include/linux/sched.h	2019-06-25 12:21:29.281579375 +0800
++++ linux/include/linux/sched.h	2019-06-25 12:23:14.309579239 +0800
+@@ -2301,6 +2301,27 @@
+ 		__mmdrop(mm);
+ }
+ 
++/*
++ * This has to be called after a get_task_mm()/mmget_not_zero()
++ * followed by taking the mmap_sem for writing before modifying the
++ * vmas or anything the coredump pretends not to change from under it.
++ *
++ * NOTE: find_extend_vma() called from GUP context is the only place
++ * that can modify the "mm" (notably the vm_start/end) under mmap_sem
++ * for reading and outside the context of the process, so it is also
++ * the only case that holds the mmap_sem for reading that must call
++ * this function. Generally if the mmap_sem is hold for reading
++ * there's no need of this check after get_task_mm()/mmget_not_zero().
++ *
++ * This function can be obsoleted and the check can be removed, after
++ * the coredump code will hold the mmap_sem for writing before
++ * invoking the ->core_dump methods.
++ */
++static inline bool mmget_still_valid(struct mm_struct *mm)
++{
++        return likely(!mm->core_state);
++}
++
+ /* mmput gets rid of the mappings and all user-space */
+ extern void mmput(struct mm_struct *);
+ /* Grab a reference to a task's mm, if it is not already going away */
+diff -Naur linux.old/mm/mmap.c linux/mm/mmap.c
+--- linux.old/mm/mmap.c	2019-06-25 12:21:29.281579375 +0800
++++ linux/mm/mmap.c	2019-06-25 13:26:58.625574307 +0800
+@@ -2273,7 +2273,8 @@
+ 	vma = find_vma_prev(mm, addr, &prev);
+ 	if (vma && (vma->vm_start <= addr))
+ 		return vma;
+-	if (!prev || expand_stack(prev, addr))
++	/* don't alter vm_end if the coredump is running */
++	if (!prev || !mmget_still_valid(mm) || expand_stack(prev, addr))
+ 		return NULL;
+ 	if (prev->vm_flags & VM_LOCKED)
+ 		__mlock_vma_pages_range(prev, addr, prev->vm_end, NULL);
+@@ -2307,6 +2308,9 @@
+ 		return vma;
+ 	if (!(vma->vm_flags & VM_GROWSDOWN))
+ 		return NULL;
++        /* don't alter vm_start if the coredump is running */
++        if (!mmget_still_valid(mm))
++                return NULL;
+ 	start = vma->vm_start;
+ 	if (expand_stack(vma, addr))
+ 		return NULL;

@@ -1,0 +1,11 @@
+diff -Naur linux.org/kernel/fork.c linux/kernel/fork.c
+--- linux.org/kernel/fork.c	2018-01-25 14:30:55.965325789 +0800
++++ linux/kernel/fork.c	2018-01-25 14:04:43.244834550 +0800
+@@ -537,6 +537,7 @@
+ 	spin_lock_init(&mm->page_table_lock);
+ 	mm_init_aio(mm);
+ 	mm_init_owner(mm, p);
++	RCU_INIT_POINTER(mm->exe_file, NULL);
+ 	clear_tlb_flush_pending(mm);
+ 
+ 	if (likely(!mm_alloc_pgd(mm))) {

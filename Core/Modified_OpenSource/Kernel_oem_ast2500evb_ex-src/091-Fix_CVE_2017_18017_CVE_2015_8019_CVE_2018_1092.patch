@@ -1,0 +1,53 @@
+diff -Naur linux.old/fs/ext4/inode.c linux.new/fs/ext4/inode.c
+--- linux.old/fs/ext4/inode.c	2019-06-24 11:40:54.405954782 +0800
++++ linux.new/fs/ext4/inode.c	2019-06-24 11:41:22.857954423 +0800
+@@ -4041,6 +4041,12 @@
+ 		goto bad_inode;
+ 	raw_inode = ext4_raw_inode(&iloc);
+ 
++	if ((ino == EXT4_ROOT_INO) && (raw_inode->i_links_count == 0)) {
++		EXT4_ERROR_INODE(inode, "root inode unallocated");
++		ret = -EIO;
++		goto bad_inode;
++	}	
++
+ 	if (EXT4_INODE_SIZE(inode->i_sb) > EXT4_GOOD_OLD_INODE_SIZE) {
+ 		ei->i_extra_isize = le16_to_cpu(raw_inode->i_extra_isize);
+ 		if (EXT4_GOOD_OLD_INODE_SIZE + ei->i_extra_isize >
+diff -Naur linux.old/net/core/datagram.c linux.new/net/core/datagram.c
+--- linux.old/net/core/datagram.c	2019-06-24 11:37:43.097957201 +0800
++++ linux.new/net/core/datagram.c	2019-06-24 11:38:03.873956938 +0800
+@@ -742,7 +742,8 @@
+ 	if (likely(!sum)) {
+ 		if (unlikely(skb->ip_summed == CHECKSUM_COMPLETE))
+ 			netdev_rx_csum_fault(skb->dev);
+-		skb->ip_summed = CHECKSUM_UNNECESSARY;
++		if (!skb_shared(skb))
++			skb->ip_summed = CHECKSUM_UNNECESSARY;
+ 	}
+ 	return sum;
+ }
+diff -Naur linux.old/net/netfilter/xt_TCPMSS.c linux.new/net/netfilter/xt_TCPMSS.c
+--- linux.old/net/netfilter/xt_TCPMSS.c	2019-06-24 11:18:46.237971570 +0800
++++ linux.new/net/netfilter/xt_TCPMSS.c	2019-06-24 11:19:35.001970954 +0800
+@@ -98,7 +98,7 @@
+ 		return -1;
+ 
+ 	len = skb->len - tcphoff;
+-	if (len < (int)sizeof(struct tcphdr))
++	if (len < tcp_hdrlen || tcp_hdrlen < sizeof(struct tcphdr))
+ 		return -1;
+ 
+ 	tcph = (struct tcphdr *)(skb_network_header(skb) + tcphoff);
+@@ -156,6 +156,11 @@
+ 	if (len > tcp_hdrlen)
+ 		return 0;
+ 
++	/* tcph->doff has 4 bits, do not wrap it to 0 */
++	if (tcp_hdrlen >= 15 * 4)
++		return 0;
++
++
+ 	/*
+ 	 * MSS Option not found ?! add it..
+ 	 */

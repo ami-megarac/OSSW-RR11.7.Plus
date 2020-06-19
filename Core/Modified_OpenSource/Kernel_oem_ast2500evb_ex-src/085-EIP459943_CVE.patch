@@ -1,0 +1,14 @@
+--- linux/fs/ext4/xattr.c	2019-03-13 16:48:43.898797603 +0800
++++ new_linux/fs/ext4/xattr.c	2019-03-13 16:47:29.291886782 +0800
+@@ -1354,6 +1354,11 @@
+ 		/* Find the entry best suited to be pushed into EA block */
+ 		entry = NULL;
+ 		for (; !IS_LAST_ENTRY(last); last = EXT4_XATTR_NEXT(last)) {
++			/* never move system.data out of the inode */
++			if ((last->e_name_len == 4) &&
++			    (last->e_name_index == EXT4_XATTR_INDEX_SYSTEM) &&
++			    !memcmp(last->e_name, "data", 4))
++				continue;
+ 			total_size =
+ 			EXT4_XATTR_SIZE(le32_to_cpu(last->e_value_size)) +
+ 					EXT4_XATTR_LEN(last->e_name_len);

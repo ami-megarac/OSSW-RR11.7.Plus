@@ -1,0 +1,50 @@
+diff -Naur linux.old/include/net/net_namespace.h linux/include/net/net_namespace.h
+--- linux.old/include/net/net_namespace.h	2019-08-15 15:18:36.645790644 +0800
++++ linux/include/net/net_namespace.h	2019-08-15 15:31:31.869709977 +0800
+@@ -52,6 +52,8 @@
+ #endif
+ 	spinlock_t		rules_mod_lock;
+ 
++	u32			hash_mix;
++
+ 	struct list_head	list;		/* list of network namespaces */
+ 	struct list_head	cleanup_list;	/* namespaces on death row */
+ 	struct list_head	exit_list;	/* Use only net_mutex */
+diff -Naur linux.old/include/net/netns/hash.h linux/include/net/netns/hash.h
+--- linux.old/include/net/netns/hash.h	2019-08-15 15:18:36.645790644 +0800
++++ linux/include/net/netns/hash.h	2019-08-15 15:33:57.944223400 +0800
+@@ -1,21 +1,10 @@
+ #ifndef __NET_NS_HASH_H__
+ #define __NET_NS_HASH_H__
+ 
+-#include <asm/cache.h>
+-
+-struct net;
++#include <net/net_namespace.h>
+ 
+ static inline unsigned int net_hash_mix(struct net *net)
+ {
+-#ifdef CONFIG_NET_NS
+-	/*
+-	 * shift this right to eliminate bits, that are
+-	 * always zeroed
+-	 */
+-
+-	return (unsigned)(((unsigned long)net) >> L1_CACHE_SHIFT);
+-#else
+-	return 0;
+-#endif
++	return net->hash_mix;
+ }
+ #endif
+diff -Naur linux.old/net/core/net_namespace.c linux/net/core/net_namespace.c
+--- linux.old/net/core/net_namespace.c	2019-08-15 15:18:36.645790644 +0800
++++ linux/net/core/net_namespace.c	2019-08-15 15:35:17.457401431 +0800
+@@ -156,6 +156,7 @@
+ 
+ 	atomic_set(&net->count, 1);
+ 	atomic_set(&net->passive, 1);
++	get_random_bytes(&net->hash_mix, sizeof(u32));
+ 	net->dev_base_seq = 1;
+ 	net->user_ns = user_ns;
+ 

@@ -1,0 +1,19 @@
+diff -Naur linux.old/fs/binfmt_elf.c linux/fs/binfmt_elf.c
+--- linux.old/fs/binfmt_elf.c	2019-06-11 15:25:22.460267222 +0800
++++ linux/fs/binfmt_elf.c	2019-06-11 15:59:23.636264589 +0800
+@@ -732,6 +732,7 @@
+ 		current->flags |= PF_RANDOMIZE;
+ 
+ 	setup_new_exec(bprm);
++	install_exec_creds(bprm);
+ 
+ 	/* Do this so that we can load the interpreter, if need be.  We will
+ 	   change some of these later */
+@@ -946,7 +947,6 @@
+ 	}
+ #endif /* ARCH_HAS_SETUP_ADDITIONAL_PAGES */
+ 
+-	install_exec_creds(bprm);
+ 	retval = create_elf_tables(bprm, &loc->elf_ex,
+ 			  load_addr, interp_load_addr);
+ 	if (retval < 0) {

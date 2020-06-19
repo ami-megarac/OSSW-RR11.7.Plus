@@ -1,0 +1,38 @@
+diff -Naur linux.old/fs/inode.c linux/fs/inode.c
+--- linux.old/fs/inode.c	2019-07-10 09:37:27.579633208 +0800
++++ linux/fs/inode.c	2019-07-10 09:37:38.491633107 +0800
+@@ -1828,8 +1828,14 @@
+ 	inode->i_uid = current_fsuid();
+ 	if (dir && dir->i_mode & S_ISGID) {
+ 		inode->i_gid = dir->i_gid;
++
++		/* Directories are special, and always inherit S_ISGID */
+ 		if (S_ISDIR(mode))
+ 			mode |= S_ISGID;
++		else if ((mode & (S_ISGID | S_IXGRP)) == (S_ISGID | S_IXGRP) &&
++			 !in_group_p(inode->i_gid) &&
++			 !capable_wrt_inode_uidgid(dir, CAP_FSETID))
++			mode &= ~S_ISGID;
+ 	} else
+ 		inode->i_gid = current_fsgid();
+ 	inode->i_mode = mode;
+diff -Naur linux.old/fs/namei.c linux/fs/namei.c
+--- linux.old/fs/namei.c	2019-07-09 16:17:34.684214171 +0800
++++ linux/fs/namei.c	2019-07-09 19:38:45.544101775 +0800
+@@ -3168,7 +3168,7 @@
+ 
+ 	if (unlikely(file->f_flags & __O_TMPFILE)) {
+ 		error = do_tmpfile(dfd, pathname, nd, flags, op, file, &opened);
+-		goto out;
++		goto out2;
+ 	}
+ 
+ 	error = path_init(dfd, pathname->name, flags | LOOKUP_PARENT, nd, &base);
+@@ -3206,6 +3206,7 @@
+ 		path_put(&nd->root);
+ 	if (base)
+ 		fput(base);
++out2:
+ 	if (!(opened & FILE_OPENED)) {
+ 		BUG_ON(!error);
+ 		put_filp(file);

@@ -1,0 +1,45 @@
+diff -Naur linux.old/drivers/cdrom/cdrom.c linux/drivers/cdrom/cdrom.c
+--- linux.old/drivers/cdrom/cdrom.c	2018-11-15 13:59:20.893557493 +0800
++++ linux/drivers/cdrom/cdrom.c	2018-11-15 14:00:46.214812599 +0800
+@@ -2509,7 +2509,7 @@
+ 	if (!CDROM_CAN(CDC_SELECT_DISC) ||
+ 	    (arg == CDSL_CURRENT || arg == CDSL_NONE))
+ 		return cdi->ops->drive_status(cdi, CDSL_CURRENT);
+-	if (((int)arg >= cdi->capacity))
++	if (arg >= cdi->capacity)
+ 		return -EINVAL;
+ 	return cdrom_slot_status(cdi, arg);
+ }
+diff -Naur linux.old/fs/exec.c linux/fs/exec.c
+--- linux.old/fs/exec.c	2018-11-15 14:41:54.646870216 +0800
++++ linux/fs/exec.c	2018-11-15 14:42:45.177793490 +0800
+@@ -218,8 +218,7 @@
+ 
+ 	if (write) {
+ 		unsigned long size = bprm->vma->vm_end - bprm->vma->vm_start;
+-		unsigned long ptr_size;
+-		struct rlimit *rlim;
++		unsigned long ptr_size, limit;
+ 
+ 		/*
+ 		 * Since the stack will hold pointers to the strings, we
+@@ -248,14 +247,16 @@
+ 			return page;
+ 
+ 		/*
+-		 * Limit to 1/4-th the stack size for the argv+env strings.
++		 * Limit to 1/4 of the max stack size or 3/4 of _STK_LIM
++		 * (whichever is smaller) for the argv+env strings.
+ 		 * This ensures that:
+ 		 *  - the remaining binfmt code will not run out of stack space,
+ 		 *  - the program will have a reasonable amount of stack left
+ 		 *    to work from.
+ 		 */
+-		rlim = current->signal->rlim;
+-		if (size > READ_ONCE(rlim[RLIMIT_STACK].rlim_cur) / 4)
++		limit = _STK_LIM / 4 * 3;
++		limit = min(limit, rlimit(RLIMIT_STACK) / 4);
++		if (size > limit)
+ 			goto fail;
+ 	}
+ 

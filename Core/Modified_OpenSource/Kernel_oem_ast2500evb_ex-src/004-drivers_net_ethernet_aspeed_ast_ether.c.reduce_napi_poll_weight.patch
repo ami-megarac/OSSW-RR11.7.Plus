@@ -1,0 +1,12 @@
+diff -Naur linux.old/drivers/net/ethernet/aspeed/ast_ether.c linux.new/drivers/net/ethernet/aspeed/ast_ether.c
+--- linux.old/drivers/net/ethernet/aspeed/ast_ether.c	2018-01-03 14:28:08.291903381 +0800
++++ linux.new/drivers/net/ethernet/aspeed/ast_ether.c	2018-01-03 14:34:43.075913323 +0800
+@@ -1582,7 +1582,7 @@
+ 
+ #ifdef CONFIG_ASTMAC100_NAPI
+ 	priv->dev = dev;
+-	netif_napi_add(dev, &priv->napi, ast_ether_poll, 64);
++	netif_napi_add(dev, &priv->napi, ast_ether_poll, 4);
+ #endif
+ 
+ 	spin_lock_init(&priv->lock);

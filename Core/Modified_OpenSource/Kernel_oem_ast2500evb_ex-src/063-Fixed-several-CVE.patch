@@ -1,0 +1,164 @@
+diff -Naur linux.old/block/genhd.c linux/block/genhd.c
+--- linux.old/block/genhd.c	2018-01-22 19:05:39.580179127 +0800
++++ linux/block/genhd.c	2018-01-22 19:06:10.817130174 +0800
+@@ -828,6 +828,7 @@
+ 	if (iter) {
+ 		class_dev_iter_exit(iter);
+ 		kfree(iter);
++		seqf->private = NULL;
+ 	}
+ }
+ 
+diff -Naur linux.old/drivers/staging/usbip/usbip_common.c linux/drivers/staging/usbip/usbip_common.c
+--- linux.old/drivers/staging/usbip/usbip_common.c	2018-01-22 18:12:40.677359413 +0800
++++ linux/drivers/staging/usbip/usbip_common.c	2018-01-22 18:14:07.139815265 +0800
+@@ -785,6 +785,17 @@
+ 	if (!(size > 0))
+ 		return 0;
+ 
++	if (size > urb->transfer_buffer_length) {
++		/* should not happen, probably malicious packet */
++		if (ud->side == USBIP_STUB) {
++			usbip_event_add(ud, SDEV_EVENT_ERROR_TCP);
++			return 0;
++		} else {
++			usbip_event_add(ud, VDEV_EVENT_ERROR_TCP);
++			return -EPIPE;
++		}
++	}	
++	
+ 	ret = usbip_recv(ud->tcp_socket, urb->transfer_buffer, size);
+ 	if (ret != size) {
+ 		dev_err(&urb->dev->dev, "recv xbuf, %d\n", ret);
+diff -Naur linux.old/fs/ioprio.c linux/fs/ioprio.c
+--- linux.old/fs/ioprio.c	2018-01-22 18:37:42.435443477 +0800
++++ linux/fs/ioprio.c	2018-01-22 18:38:26.528970681 +0800
+@@ -149,8 +149,10 @@
+ 	if (ret)
+ 		goto out;
+ 	ret = IOPRIO_PRIO_VALUE(IOPRIO_CLASS_NONE, IOPRIO_NORM);
++	task_lock(p);
+ 	if (p->io_context)
+ 		ret = p->io_context->ioprio;
++	task_unlock(p);
+ out:
+ 	return ret;
+ }
+diff -Naur linux.old/net/ipv4/inet_connection_sock.c linux/net/ipv4/inet_connection_sock.c
+--- linux.old/net/ipv4/inet_connection_sock.c	2018-01-22 17:27:45.182377480 +0800
++++ linux/net/ipv4/inet_connection_sock.c	2018-01-22 17:45:18.192592988 +0800
+@@ -680,6 +680,8 @@
+ 		inet_sk(newsk)->inet_sport = htons(inet_rsk(req)->ir_num);
+ 		newsk->sk_write_space = sk_stream_write_space;
+ 
++		inet_sk(newsk)->mc_list = NULL;
++
+ 		newicsk->icsk_retransmits = 0;
+ 		newicsk->icsk_backoff	  = 0;
+ 		newicsk->icsk_probes_out  = 0;
+diff -Naur linux.old/net/ipv4/udp.c linux/net/ipv4/udp.c
+--- linux.old/net/ipv4/udp.c	2018-01-22 18:21:45.732308173 +0800
++++ linux/net/ipv4/udp.c	2018-01-22 18:23:13.022437222 +0800
+@@ -1232,6 +1232,7 @@
+ 	int peeked, off = 0;
+ 	int err;
+ 	int is_udplite = IS_UDPLITE(sk);
++	bool checksum_valid = false;
+ 	bool slow;
+ 
+ 	if (flags & MSG_ERRQUEUE)
+@@ -1257,11 +1258,12 @@
+ 	 */
+ 
+ 	if (copied < ulen || UDP_SKB_CB(skb)->partial_cov) {
+-		if (udp_lib_checksum_complete(skb))
++		checksum_valid = !udp_lib_checksum_complete(skb);
++		if (!checksum_valid)
+ 			goto csum_copy_err;
+ 	}
+ 
+-	if (skb_csum_unnecessary(skb))
++	if (checksum_valid || skb_csum_unnecessary(skb))
+ 		err = skb_copy_datagram_iovec(skb, sizeof(struct udphdr),
+ 					      msg->msg_iov, copied);
+ 	else {
+diff -Naur linux.old/net/ipv6/udp.c linux/net/ipv6/udp.c
+--- linux.old/net/ipv6/udp.c	2018-01-22 18:21:59.196183403 +0800
++++ linux/net/ipv6/udp.c	2018-01-22 18:23:56.138962717 +0800
+@@ -389,6 +389,7 @@
+ 	int peeked, off = 0;
+ 	int err;
+ 	int is_udplite = IS_UDPLITE(sk);
++	bool checksum_valid = false;
+ 	int is_udp4;
+ 	bool slow;
+ 
+@@ -420,11 +421,12 @@
+ 	 */
+ 
+ 	if (copied < ulen || UDP_SKB_CB(skb)->partial_cov) {
+-		if (udp_lib_checksum_complete(skb))
++		checksum_valid = !udp_lib_checksum_complete(skb);
++		if (!checksum_valid)
+ 			goto csum_copy_err;
+ 	}
+ 
+-	if (skb_csum_unnecessary(skb))
++	if (checksum_valid || skb_csum_unnecessary(skb))
+ 		err = skb_copy_datagram_iovec(skb, sizeof(struct udphdr),
+ 					      msg->msg_iov, copied);
+ 	else {
+diff -Naur linux.old/net/socket.c linux/net/socket.c
+--- linux.old/net/socket.c	2018-01-22 17:52:17.532701968 +0800
++++ linux/net/socket.c	2018-01-22 17:55:29.067257117 +0800
+@@ -2407,31 +2407,31 @@
+ 			break;
+ 	}
+ 
+-out_put:
+-	fput_light(sock->file, fput_needed);
+-
+ 	if (err == 0)
+-		return datagrams;
++		goto out_put;
++
++	if (datagrams == 0) {
++		datagrams = err;
++		goto out_put;
++	}
+ 
+-	if (datagrams != 0) {
++	/*
++	 * We may return less entries than requested (vlen) if the
++	 * sock is non block and there aren't enough datagrams...
++	 */
++	if (err != -EAGAIN) {
+ 		/*
+-		 * We may return less entries than requested (vlen) if the
+-		 * sock is non block and there aren't enough datagrams...
++		 * ... or  if recvmsg returns an error after we
++		 * received some datagrams, where we record the
++		 * error to return on the next call or if the
++		 * app asks about it using getsockopt(SO_ERROR).
+ 		 */
+-		if (err != -EAGAIN) {
+-			/*
+-			 * ... or  if recvmsg returns an error after we
+-			 * received some datagrams, where we record the
+-			 * error to return on the next call or if the
+-			 * app asks about it using getsockopt(SO_ERROR).
+-			 */
+-			sock->sk->sk_err = -err;
+-		}
+-
+-		return datagrams;
++		sock->sk->sk_err = -err;
+ 	}
++out_put:
++	fput_light(sock->file, fput_needed);
+ 
+-	return err;
++	return datagrams;
+ }
+ 
+ SYSCALL_DEFINE5(recvmmsg, int, fd, struct mmsghdr __user *, mmsg,

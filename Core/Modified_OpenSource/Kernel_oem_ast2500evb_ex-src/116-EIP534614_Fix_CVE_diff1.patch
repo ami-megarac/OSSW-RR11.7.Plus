@@ -1,0 +1,188 @@
+diff -Naur linux.old/crypto/hmac.c linux/crypto/hmac.c
+--- linux.old/crypto/hmac.c	2020-04-17 14:49:06.753005738 +0800
++++ linux/crypto/hmac.c	2020-04-17 15:18:21.798062265 +0800
+@@ -197,11 +197,15 @@
+ 	salg = shash_attr_alg(tb[1], 0, 0);
+ 	if (IS_ERR(salg))
+ 		return PTR_ERR(salg);
++	alg = &salg->base;
+ 
++	/* The underlying hash algorithm must be unkeyed */
+ 	err = -EINVAL;
++	if (crypto_shash_alg_has_setkey(salg))
++		goto out_put_alg;
++
+ 	ds = salg->digestsize;
+ 	ss = salg->statesize;
+-	alg = &salg->base;
+ 	if (ds > alg->cra_blocksize ||
+ 	    ss < alg->cra_blocksize)
+ 		goto out_put_alg;
+diff -Naur linux.old/crypto/shash.c linux/crypto/shash.c
+--- linux.old/crypto/shash.c	2020-04-17 14:49:06.753005738 +0800
++++ linux/crypto/shash.c	2020-04-17 15:20:01.832877361 +0800
+@@ -24,11 +24,12 @@
+ 
+ static const struct crypto_type crypto_shash_type;
+ 
+-static int shash_no_setkey(struct crypto_shash *tfm, const u8 *key,
++int shash_no_setkey(struct crypto_shash *tfm, const u8 *key,
+ 			   unsigned int keylen)
+ {
+ 	return -ENOSYS;
+ }
++EXPORT_SYMBOL_GPL(shash_no_setkey);
+ 
+ static int shash_setkey_unaligned(struct crypto_shash *tfm, const u8 *key,
+ 				  unsigned int keylen)
+diff -Naur linux.old/drivers/block/loop.c linux/drivers/block/loop.c
+--- linux.old/drivers/block/loop.c	2020-04-17 14:49:06.753005738 +0800
++++ linux/drivers/block/loop.c	2020-04-17 15:32:20.971659423 +0800
+@@ -1512,9 +1512,8 @@
+ 	return err;
+ }
+ 
+-static void lo_release(struct gendisk *disk, fmode_t mode)
++static void __lo_release(struct loop_device *lo)
+ {
+-	struct loop_device *lo = disk->private_data;
+ 	int err;
+ 
+ 	mutex_lock(&lo->lo_ctl_mutex);
+@@ -1542,6 +1541,13 @@
+ 	mutex_unlock(&lo->lo_ctl_mutex);
+ }
+ 
++static void lo_release(struct gendisk *disk, fmode_t mode)
++{
++	mutex_lock(&loop_index_mutex);
++	__lo_release(disk->private_data);
++	mutex_unlock(&loop_index_mutex);
++}
++
+ static const struct block_device_operations lo_fops = {
+ 	.owner =	THIS_MODULE,
+ 	.open =		lo_open,
+diff -Naur linux.old/include/crypto/internal/hash.h linux/include/crypto/internal/hash.h
+--- linux.old/include/crypto/internal/hash.h	2020-04-17 14:49:06.753005738 +0800
++++ linux/include/crypto/internal/hash.h	2020-04-17 15:21:04.324651849 +0800
+@@ -70,6 +70,14 @@
+ 			    struct ahash_instance *inst);
+ void ahash_free_instance(struct crypto_instance *inst);
+ 
++int shash_no_setkey(struct crypto_shash *tfm, const u8 *key,
++		    unsigned int keylen);
++
++static inline bool crypto_shash_alg_has_setkey(struct shash_alg *alg)
++{
++	return alg->setkey != shash_no_setkey;
++}
++
+ int crypto_init_ahash_spawn(struct crypto_ahash_spawn *spawn,
+ 			    struct hash_alg_common *alg,
+ 			    struct crypto_instance *inst);
+diff -Naur linux.old/kernel/futex.c linux/kernel/futex.c
+--- linux.old/kernel/futex.c	2020-04-17 14:49:06.753005738 +0800
++++ linux/kernel/futex.c	2020-04-17 15:33:18.437940179 +0800
+@@ -1509,6 +1509,9 @@
+ 	struct futex_hash_bucket *hb1, *hb2;
+ 	struct futex_q *this, *next;
+ 
++	if (nr_wake < 0 || nr_requeue < 0)
++		return -EINVAL;
++
+ 	if (requeue_pi) {
+ 		/*
+ 		 * Requeue PI only works on two distinct uaddrs. This
+diff -Naur linux.old/lib/asn1_decoder.c linux/lib/asn1_decoder.c
+--- linux.old/lib/asn1_decoder.c	2020-04-17 14:49:06.753005738 +0800
++++ linux/lib/asn1_decoder.c	2020-04-17 15:38:16.407868335 +0800
+@@ -69,7 +69,7 @@
+ 
+ 	/* Extract a tag from the data */
+ 	tag = data[dp++];
+-	if (tag == 0) {
++	if (tag == ASN1_EOC) {
+ 		/* It appears to be an EOC. */
+ 		if (data[dp++] != 0)
+ 			goto invalid_eoc;
+@@ -91,10 +91,8 @@
+ 
+ 	/* Extract the length */
+ 	len = data[dp++];
+-	if (len <= 0x7f) {
+-		dp += len;
+-		goto next_tag;
+-	}
++	if (len <= 0x7f)
++		goto check_length;
+ 
+ 	if (unlikely(len == ASN1_INDEFINITE_LENGTH)) {
+ 		/* Indefinite length */
+@@ -105,11 +103,12 @@
+ 	}
+ 
+ 	n = len - 0x80;
+-	if (unlikely(n > sizeof(size_t) - 1))
++	if (unlikely(n > sizeof(len) - 1))
+ 		goto length_too_long;
+ 	if (unlikely(n > datalen - dp))
+ 		goto data_overrun_error;
+-	for (len = 0; n > 0; n--) {
++	len = 0;
++	for (; n > 0; n--) {
+ 		len <<= 8;
+ 		len |= data[dp++];
+ 	}
+diff -Naur linux.old/mm/memory.c linux/mm/memory.c
+--- linux.old/mm/memory.c	2020-04-17 14:49:06.753005738 +0800
++++ linux/mm/memory.c	2020-04-17 15:42:56.252259525 +0800
+@@ -3613,11 +3613,9 @@
+ 	entry = *pte;
+ 	if (!pte_present(entry)) {
+ 		if (pte_none(entry)) {
+-			if (vma->vm_ops) {
+-				if (likely(vma->vm_ops->fault))
+-					return do_linear_fault(mm, vma, address,
+-						pte, pmd, flags, entry);
+-			}
++			if (vma->vm_ops)
++				return do_linear_fault(mm, vma, address,
++						pte, pmd, flags, entry);	
+ 			return do_anonymous_page(mm, vma, address,
+ 						 pte, pmd, flags);
+ 		}
+diff -Naur linux.old/security/keys/keyring.c linux/security/keys/keyring.c
+--- linux.old/security/keys/keyring.c	2020-04-17 14:49:06.753005738 +0800
++++ linux/security/keys/keyring.c	2020-04-17 15:23:00.523725589 +0800
+@@ -848,6 +848,9 @@
+ 			return ERR_PTR(err);
+ 	}
+ 
++	if (!ctx->match)
++		return ERR_PTR(-ENOKEY);
++
+ 	rcu_read_lock();
+ 	ctx->now = current_kernel_time();
+ 	if (search_nested_keyrings(keyring, ctx))
+@@ -879,9 +882,6 @@
+ 					   KEYRING_SEARCH_DO_STATE_CHECK),
+ 	};
+ 
+-	if (!ctx.match)
+-		return ERR_PTR(-ENOKEY);
+-
+ 	return keyring_search_aux(keyring, &ctx);
+ }
+ EXPORT_SYMBOL(keyring_search);
+diff -Naur linux.old/security/keys/process_keys.c linux/security/keys/process_keys.c
+--- linux.old/security/keys/process_keys.c	2020-04-17 14:49:06.753005738 +0800
++++ linux/security/keys/process_keys.c	2020-04-17 15:24:17.872852929 +0800
+@@ -808,6 +808,7 @@
+ 		ret = PTR_ERR(keyring);
+ 		goto error2;
+ 	} else if (keyring == new->session_keyring) {
++		key_put(keyring);
+ 		ret = 0;
+ 		goto error2;
+ 	}

@@ -1,0 +1,90 @@
+diff -Naur linux.old/fs/proc/base.c linux.new/fs/proc/base.c
+--- linux.old/fs/proc/base.c	2019-03-20 11:30:21.329657991 +0800
++++ linux.new/fs/proc/base.c	2019-03-20 11:38:59.065671030 +0800
+@@ -307,6 +307,20 @@
+ 	int err;
+ 	int i;
+ 
++	/*
++	 * The ability to racily run the kernel stack unwinder on a running task
++	 * and then observe the unwinder output is scary; while it is useful for
++	 * debugging kernel issues, it can also allow an attacker to leak kernel
++	 * stack contents.
++	 * Doing this in a manner that is at least safe from races would require
++	 * some work to ensure that the remote task can not be scheduled; and
++	 * even then, this would still expose the unwinder as local attack
++	 * surface.
++	 * Therefore, this interface is restricted to root.
++	 */
++	if (!file_ns_capable(m->file, &init_user_ns, CAP_SYS_ADMIN))
++		return -EACCES;
++
+ 	entries = kmalloc(MAX_STACK_TRACE_DEPTH * sizeof(*entries), GFP_KERNEL);
+ 	if (!entries)
+ 		return -ENOMEM;
+diff -Naur linux.old/mm/mremap.c linux.new/mm/mremap.c
+--- linux.old/mm/mremap.c	2019-03-20 11:30:02.121657508 +0800
++++ linux.new/mm/mremap.c	2019-03-20 11:37:47.909669238 +0800
+@@ -97,6 +97,8 @@
+ 	struct mm_struct *mm = vma->vm_mm;
+ 	pte_t *old_pte, *new_pte, pte;
+ 	spinlock_t *old_ptl, *new_ptl;
++	bool force_flush = false;
++	unsigned long len = old_end - old_addr;
+ 
+ 	/*
+ 	 * When need_rmap_locks is true, we take the i_mmap_mutex and anon_vma
+@@ -143,12 +145,26 @@
+ 		if (pte_none(*old_pte))
+ 			continue;
+ 		pte = ptep_get_and_clear(mm, old_addr, old_pte);
++/*
+++		 * If we are remapping a valid PTE, make sure
+++		 * to flush TLB before we drop the PTL for the PTE.
+++		 *
+++		 * NOTE! Both old and new PTL matter: the old one
+++		 * for racing with page_mkclean(), the new one to
+++		 * make sure the physical page stays valid until
+++		 * the TLB entry for the old mapping has been
+++		 * flushed.
+++		 */
++		if (pte_present(pte))
++			force_flush = true;
+ 		pte = move_pte(pte, new_vma->vm_page_prot, old_addr, new_addr);
+ 		pte = move_soft_dirty_pte(pte);
+ 		set_pte_at(mm, new_addr, new_pte, pte);
+ 	}
+ 
+ 	arch_leave_lazy_mmu_mode();
++	if (force_flush)
++		flush_tlb_range(vma, old_end - len, old_end);
+ 	if (new_ptl != old_ptl)
+ 		spin_unlock(new_ptl);
+ 	pte_unmap(new_pte - 1);
+@@ -168,7 +184,6 @@
+ {
+ 	unsigned long extent, next, old_end;
+ 	pmd_t *old_pmd, *new_pmd;
+-	bool need_flush = false;
+ 	unsigned long mmun_start;	/* For mmu_notifiers */
+ 	unsigned long mmun_end;		/* For mmu_notifiers */
+ 
+@@ -206,7 +221,6 @@
+ 					anon_vma_unlock_write(vma->anon_vma);
+ 			}
+ 			if (err > 0) {
+-				need_flush = true;
+ 				continue;
+ 			} else if (!err) {
+ 				split_huge_page_pmd(vma, old_addr, old_pmd);
+@@ -223,10 +237,7 @@
+ 			extent = LATENCY_LIMIT;
+ 		move_ptes(vma, old_pmd, old_addr, old_addr + extent,
+ 			  new_vma, new_pmd, new_addr, need_rmap_locks);
+-		need_flush = true;
+ 	}
+-	if (likely(need_flush))
+-		flush_tlb_range(vma, old_end-len, old_addr);
+ 
+ 	mmu_notifier_invalidate_range_end(vma->vm_mm, mmun_start, mmun_end);
+ 

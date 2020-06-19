@@ -1,0 +1,94 @@
+diff -Naur linux.old/kernel/trace/trace.c linux/kernel/trace/trace.c
+--- linux.old/kernel/trace/trace.c	2019-11-01 16:35:51.241172700 +0800
++++ linux/kernel/trace/trace.c	2019-11-01 16:56:38.831895319 +0800
+@@ -6006,6 +6006,7 @@
+ 	buf->data = alloc_percpu(struct trace_array_cpu);
+ 	if (!buf->data) {
+ 		ring_buffer_free(buf->buffer);
++		buf->buffer = NULL;
+ 		return -ENOMEM;
+ 	}
+ 
+diff -Naur linux.old/net/core/net-sysfs.c linux/net/core/net-sysfs.c
+--- linux.old/net/core/net-sysfs.c	2019-11-01 16:57:41.107243245 +0800
++++ linux/net/core/net-sysfs.c	2019-11-01 17:03:05.739809239 +0800
+@@ -1211,6 +1211,9 @@
+ error:
+ 	netdev_queue_update_kobjects(net, txq, 0);
+ 	net_rx_queue_update_kobjects(net, rxq, 0);
++#ifdef CONFIG_SYSFS
++        kset_unregister(net->queues_kset);
++#endif
+ 	return error;
+ }
+ 
+diff -Naur linux.old/net/ipv4/tcp_output.c linux/net/ipv4/tcp_output.c
+--- linux.old/net/ipv4/tcp_output.c	2019-11-01 17:38:12.412444902 +0800
++++ linux/net/ipv4/tcp_output.c	2019-11-01 18:11:40.290702607 +0800
+@@ -2372,8 +2372,10 @@
+ 		return -EAGAIN;
+ 
+ 	if (before(TCP_SKB_CB(skb)->seq, tp->snd_una)) {
+-		if (before(TCP_SKB_CB(skb)->end_seq, tp->snd_una))
+-			BUG();
++                if (unlikely(before(TCP_SKB_CB(skb)->end_seq, tp->snd_una))) {
++                        WARN_ON_ONCE(1);
++                        return -EINVAL;
++                }
+ 		if (tcp_trim_head(sk, skb, tp->snd_una - TCP_SKB_CB(skb)->seq))
+ 			return -ENOMEM;
+ 	}
+diff -Naur linux.old/virt/kvm/coalesced_mmio.c linux/virt/kvm/coalesced_mmio.c
+--- linux.old/virt/kvm/coalesced_mmio.c	2019-11-01 15:10:50.999874498 +0800
++++ linux/virt/kvm/coalesced_mmio.c	2019-11-01 15:16:24.656296839 +0800
+@@ -39,7 +39,7 @@
+ 	return 1;
+ }
+ 
+-static int coalesced_mmio_has_room(struct kvm_coalesced_mmio_dev *dev)
++static int coalesced_mmio_has_room(struct kvm_coalesced_mmio_dev *dev, u32 last)
+ {
+ 	struct kvm_coalesced_mmio_ring *ring;
+ 	unsigned avail;
+@@ -51,7 +51,7 @@
+ 	 * there is always one unused entry in the buffer
+ 	 */
+ 	ring = dev->kvm->coalesced_mmio_ring;
+-	avail = (ring->first - ring->last - 1) % KVM_COALESCED_MMIO_MAX;
++	avail = (ring->first - last - 1) % KVM_COALESCED_MMIO_MAX;
+ 	if (avail == 0) {
+ 		/* full */
+ 		return 0;
+@@ -65,24 +65,27 @@
+ {
+ 	struct kvm_coalesced_mmio_dev *dev = to_mmio(this);
+ 	struct kvm_coalesced_mmio_ring *ring = dev->kvm->coalesced_mmio_ring;
++	__u32 insert;
+ 
+ 	if (!coalesced_mmio_in_range(dev, addr, len))
+ 		return -EOPNOTSUPP;
+ 
+ 	spin_lock(&dev->kvm->ring_lock);
+ 
+-	if (!coalesced_mmio_has_room(dev)) {
++	insert = READ_ONCE(ring->last);
++	if (!coalesced_mmio_has_room(dev, insert) ||
++	    insert >= KVM_COALESCED_MMIO_MAX) {
+ 		spin_unlock(&dev->kvm->ring_lock);
+ 		return -EOPNOTSUPP;
+ 	}
+ 
+ 	/* copy data in first free entry of the ring */
+ 
+-	ring->coalesced_mmio[ring->last].phys_addr = addr;
+-	ring->coalesced_mmio[ring->last].len = len;
+-	memcpy(ring->coalesced_mmio[ring->last].data, val, len);
++	ring->coalesced_mmio[insert].phys_addr = addr;
++	ring->coalesced_mmio[insert].len = len;
++	memcpy(ring->coalesced_mmio[insert].data, val, len);
+ 	smp_wmb();
+-	ring->last = (ring->last + 1) % KVM_COALESCED_MMIO_MAX;
++	ring->last = (insert + 1) % KVM_COALESCED_MMIO_MAX;
+ 	spin_unlock(&dev->kvm->ring_lock);
+ 	return 0;
+ }

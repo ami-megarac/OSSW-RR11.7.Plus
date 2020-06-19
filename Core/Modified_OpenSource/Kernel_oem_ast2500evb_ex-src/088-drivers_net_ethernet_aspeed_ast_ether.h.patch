@@ -1,0 +1,21 @@
+diff -Naur linux.old/drivers/net/ethernet/aspeed/ast_ether.h linux.new/drivers/net/ethernet/aspeed/ast_ether.h
+--- linux.old/drivers/net/ethernet/aspeed/ast_ether.h	2019-04-11 10:25:11.189428172 +0800
++++ linux.new/drivers/net/ethernet/aspeed/ast_ether.h	2019-04-11 10:26:00.097429404 +0800
+@@ -276,7 +276,7 @@
+ #endif
+ 
+ /* the length of buffer length has to be a power of two */
+-#define RX_DES_NUM		32
++#define RX_DES_NUM		64
+ #define RX_BUF_SIZE		1536
+ 
+ #define TX_DES_NUM		32
+@@ -313,7 +313,7 @@
+ 
+ 	/* streaming DMA mapping of socket buffer */
+ 	dma_addr_t tx_skb_dma[TX_DES_NUM];
+-	dma_addr_t rx_skb_dma[TX_DES_NUM];
++	dma_addr_t rx_skb_dma[RX_DES_NUM];
+ 
+ 	unsigned int cur_tx, cur_rx; /* The next free ring entry */
+ 	unsigned int dirty_tx, dirty_rx; /* The ring entries to be free()ed. */

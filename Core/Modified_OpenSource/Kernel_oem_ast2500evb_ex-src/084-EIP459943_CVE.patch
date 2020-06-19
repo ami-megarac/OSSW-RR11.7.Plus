@@ -1,0 +1,282 @@
+diff -Naur old_linux/fs/ext4/balloc.c linux/fs/ext4/balloc.c
+--- old_linux/fs/ext4/balloc.c	2019-03-06 13:59:07.208589680 +0800
++++ linux/fs/ext4/balloc.c	2019-03-12 14:04:48.353080893 +0800
+@@ -183,7 +183,6 @@
+ 	unsigned int bit, bit_max;
+ 	struct ext4_sb_info *sbi = EXT4_SB(sb);
+ 	ext4_fsblk_t start, tmp;
+-	int flex_bg = 0;
+ 	struct ext4_group_info *grp;
+ 
+ 	J_ASSERT_BH(bh, buffer_locked(bh));
+@@ -205,22 +204,19 @@
+ 
+ 	start = ext4_group_first_block_no(sb, block_group);
+ 
+-	if (EXT4_HAS_INCOMPAT_FEATURE(sb, EXT4_FEATURE_INCOMPAT_FLEX_BG))
+-		flex_bg = 1;
+-
+ 	/* Set bits for block and inode bitmaps, and inode table */
+ 	tmp = ext4_block_bitmap(sb, gdp);
+-	if (!flex_bg || ext4_block_in_group(sb, tmp, block_group))
++	if (ext4_block_in_group(sb, tmp, block_group))
+ 		ext4_set_bit(EXT4_B2C(sbi, tmp - start), bh->b_data);
+ 
+ 	tmp = ext4_inode_bitmap(sb, gdp);
+-	if (!flex_bg || ext4_block_in_group(sb, tmp, block_group))
++	if (ext4_block_in_group(sb, tmp, block_group))
+ 		ext4_set_bit(EXT4_B2C(sbi, tmp - start), bh->b_data);
+ 
+ 	tmp = ext4_inode_table(sb, gdp);
+ 	for (; tmp < ext4_inode_table(sb, gdp) +
+ 		     sbi->s_itb_per_group; tmp++) {
+-		if (!flex_bg || ext4_block_in_group(sb, tmp, block_group))
++		if (ext4_block_in_group(sb, tmp, block_group))
+ 			ext4_set_bit(EXT4_B2C(sbi, tmp - start), bh->b_data);
+ 	}
+ 
+@@ -307,6 +303,7 @@
+ 					    ext4_group_t block_group,
+ 					    struct buffer_head *bh)
+ {
++	struct ext4_sb_info *sbi = EXT4_SB(sb);
+ 	ext4_grpblk_t offset;
+ 	ext4_grpblk_t next_zero_bit;
+ 	ext4_fsblk_t blk;
+@@ -326,20 +323,25 @@
+ 	/* check whether block bitmap block number is set */
+ 	blk = ext4_block_bitmap(sb, desc);
+ 	offset = blk - group_first_block;
+-	if (!ext4_test_bit(offset, bh->b_data))
++       if (offset < 0 || EXT4_B2C(sbi, offset) >= sb->s_blocksize || 
++		!ext4_test_bit(offset, bh->b_data))
+ 		/* bad block bitmap */
+ 		return blk;
+ 
+ 	/* check whether the inode bitmap block number is set */
+ 	blk = ext4_inode_bitmap(sb, desc);
+ 	offset = blk - group_first_block;
+-	if (!ext4_test_bit(offset, bh->b_data))
++       if (offset < 0 || EXT4_B2C(sbi, offset) >= sb->s_blocksize ||
++               !ext4_test_bit(offset, bh->b_data))
+ 		/* bad block bitmap */
+ 		return blk;
+ 
+ 	/* check whether the inode table block number is set */
+ 	blk = ext4_inode_table(sb, desc);
+ 	offset = blk - group_first_block;
++       if (offset < 0 || EXT4_B2C(sbi, offset) >= sb->s_blocksize ||
++           EXT4_B2C(sbi, offset + sbi->s_itb_per_group) >= sb->s_blocksize)
++               return blk;
+ 	next_zero_bit = ext4_find_next_zero_bit(bh->b_data,
+ 				offset + EXT4_SB(sb)->s_itb_per_group,
+ 				offset);
+@@ -394,6 +396,7 @@
+ ext4_read_block_bitmap_nowait(struct super_block *sb, ext4_group_t block_group)
+ {
+ 	struct ext4_group_desc *desc;
++	struct ext4_sb_info *sbi = EXT4_SB(sb);
+ 	struct buffer_head *bh;
+ 	ext4_fsblk_t bitmap_blk;
+ 
+@@ -401,6 +404,12 @@
+ 	if (!desc)
+ 		return NULL;
+ 	bitmap_blk = ext4_block_bitmap(sb, desc);
++       if ((bitmap_blk <= le32_to_cpu(sbi->s_es->s_first_data_block)) ||
++           (bitmap_blk >= ext4_blocks_count(sbi->s_es))) {
++               ext4_error(sb, "Invalid inode bitmap blk %llu in "
++                          "block_group %u", bitmap_blk, block_group);
++               return NULL;
++       }
+ 	bh = sb_getblk(sb, bitmap_blk);
+ 	if (unlikely(!bh)) {
+ 		ext4_error(sb, "Cannot get buffer for block bitmap - "
+diff -Naur old_linux/fs/ext4/ialloc.c linux/fs/ext4/ialloc.c
+--- old_linux/fs/ext4/ialloc.c	2019-03-06 13:59:36.824152887 +0800
++++ linux/fs/ext4/ialloc.c	2019-03-12 14:04:57.936940634 +0800
+@@ -113,6 +113,7 @@
+ ext4_read_inode_bitmap(struct super_block *sb, ext4_group_t block_group)
+ {
+ 	struct ext4_group_desc *desc;
++	struct ext4_sb_info *sbi = EXT4_SB(sb);
+ 	struct buffer_head *bh = NULL;
+ 	ext4_fsblk_t bitmap_blk;
+ 	struct ext4_group_info *grp;
+@@ -122,6 +123,12 @@
+ 		return NULL;
+ 
+ 	bitmap_blk = ext4_inode_bitmap(sb, desc);
++       if ((bitmap_blk <= le32_to_cpu(sbi->s_es->s_first_data_block)) ||
++           (bitmap_blk >= ext4_blocks_count(sbi->s_es))) {
++               ext4_error(sb, "Invalid inode bitmap blk %llu in "
++                          "block_group %u", bitmap_blk, block_group);
++               return NULL;
++       }
+ 	bh = sb_getblk(sb, bitmap_blk);
+ 	if (unlikely(!bh)) {
+ 		ext4_error(sb, "Cannot read inode bitmap - "
+diff -Naur old_linux/fs/ext4/inline.c linux/fs/ext4/inline.c
+--- old_linux/fs/ext4/inline.c	2019-03-08 13:59:10.450366545 +0800
++++ linux/fs/ext4/inline.c	2019-03-12 14:05:12.528727082 +0800
+@@ -435,6 +435,8 @@
+ 	memset((void *)ext4_raw_inode(&is.iloc)->i_block,
+ 		0, EXT4_MIN_INLINE_DATA_SIZE);
+ 
++	memset(ei->i_data, 0, EXT4_MIN_INLINE_DATA_SIZE);
++
+ 	if (EXT4_HAS_INCOMPAT_FEATURE(inode->i_sb,
+ 				      EXT4_FEATURE_INCOMPAT_EXTENTS)) {
+ 		if (S_ISDIR(inode->i_mode) ||
+diff -Naur old_linux/fs/ext4/super.c linux/fs/ext4/super.c
+--- old_linux/fs/ext4/super.c	2019-03-06 14:39:38.789396299 +0800
++++ linux/fs/ext4/super.c	2019-03-12 14:05:18.856634472 +0800
+@@ -2068,12 +2068,14 @@
+ 
+ /* Called at mount-time, super-block is locked */
+ static int ext4_check_descriptors(struct super_block *sb,
+-				  ext4_group_t *first_not_zeroed)
++				  ext4_group_t *first_not_zeroed,
++				  ext4_fsblk_t sb_block)
+ {
+ 	struct ext4_sb_info *sbi = EXT4_SB(sb);
+ 	ext4_fsblk_t first_block = le32_to_cpu(sbi->s_es->s_first_data_block);
+ 	ext4_fsblk_t last_block;
+ 	ext4_fsblk_t block_bitmap;
++	ext4_fsblk_t last_bg_block = sb_block + ext4_bg_num_gdb(sb, 0) + 1;
+ 	ext4_fsblk_t inode_bitmap;
+ 	ext4_fsblk_t inode_table;
+ 	int flexbg_flag = 0;
+@@ -2098,6 +2100,12 @@
+ 			grp = i;
+ 
+ 		block_bitmap = ext4_block_bitmap(sb, gdp);
++                if (block_bitmap >= sb_block + 1 && block_bitmap <= last_bg_block){
++                       printk(   KERN_ERR "ext4_check_descriptors: "
++                                 "Block bitmap for group %u overlaps "
++                                 "block group descriptors \n", i);
++                       return 0;
++                }
+ 		if (block_bitmap < first_block || block_bitmap > last_block) {
+ 			ext4_msg(sb, KERN_ERR, "ext4_check_descriptors: "
+ 			       "Block bitmap for group %u not in group "
+@@ -2105,6 +2113,12 @@
+ 			return 0;
+ 		}
+ 		inode_bitmap = ext4_inode_bitmap(sb, gdp);
++                if (inode_bitmap >= sb_block + 1 && inode_bitmap <= last_bg_block) {
++                       printk(KERN_ERR "ext4_check_descriptors: "
++                                 "Inode bitmap for group %u overlaps "
++                                 "block group descriptors", i);
++                       return 0;
++                }
+ 		if (inode_bitmap < first_block || inode_bitmap > last_block) {
+ 			ext4_msg(sb, KERN_ERR, "ext4_check_descriptors: "
+ 			       "Inode bitmap for group %u not in group "
+@@ -2112,6 +2126,12 @@
+ 			return 0;
+ 		}
+ 		inode_table = ext4_inode_table(sb, gdp);
++               if (inode_table >= sb_block + 1 && inode_table <= last_bg_block) {
++                       printk(KERN_ERR "ext4_check_descriptors: "
++                                  "Inode table for group %u overlaps "
++                                  "block group descriptors", i);
++                       return 0;
++               }
+ 		if (inode_table < first_block ||
+ 		    inode_table + sbi->s_itb_per_group - 1 > last_block) {
+ 			ext4_msg(sb, KERN_ERR, "ext4_check_descriptors: "
+@@ -3862,7 +3882,7 @@
+ 			goto failed_mount2;
+ 		}
+ 	}
+-	if (!ext4_check_descriptors(sb, &first_not_zeroed)) {
++	if (!ext4_check_descriptors(sb, &first_not_zeroed, logical_sb_block)) {
+ 		ext4_msg(sb, KERN_ERR, "group descriptors corrupted!");
+ 		goto failed_mount2;
+ 	}
+diff -Naur old_linux/fs/ext4/xattr.c linux/fs/ext4/xattr.c
+--- old_linux/fs/ext4/xattr.c	2019-03-08 11:27:10.341699762 +0800
++++ linux/fs/ext4/xattr.c	2019-03-12 14:05:28.040500065 +0800
+@@ -211,6 +211,10 @@
+ 	if (BHDR(bh)->h_magic != cpu_to_le32(EXT4_XATTR_MAGIC) ||
+ 	    BHDR(bh)->h_blocks != cpu_to_le32(1))
+ 		return -EIO;
++
++	if (buffer_verified(bh))
++		return 0;
++
+ 	if (!ext4_xattr_block_csum_verify(inode, bh->b_blocknr, BHDR(bh)))
+ 		return -EIO;
+ 	error = ext4_xattr_check_names(BFIRST(bh), bh->b_data + bh->b_size);
+@@ -595,18 +599,24 @@
+ static int
+ ext4_xattr_set_entry(struct ext4_xattr_info *i, struct ext4_xattr_search *s)
+ {
+-	struct ext4_xattr_entry *last;
++	struct ext4_xattr_entry *last, *next;
+ 	size_t free, min_offs = s->end - s->base, name_len = strlen(i->name);
+ 
+ 	/* Compute min_offs and last. */
+ 	last = s->first;
+-	for (; !IS_LAST_ENTRY(last); last = EXT4_XATTR_NEXT(last)) {
++	for (; !IS_LAST_ENTRY(last); last = next) {
++		next = EXT4_XATTR_NEXT(last);
++		if ((void *)next >= s->end) {
++			return -ENOSPC;
++		}
+ 		if (!last->e_value_block && last->e_value_size) {
+ 			size_t offs = le16_to_cpu(last->e_value_offs);
+ 			if (offs < min_offs)
+ 				min_offs = offs;
+ 		}
+ 	}
++
++
+ 	free = min_offs - ((void *)last - s->base) - sizeof(__u32);
+ 	if (!s->not_found) {
+ 		if (!s->here->e_value_block && s->here->e_value_size) {
+diff -Naur old_linux/kernel/events/core.c linux/kernel/events/core.c
+--- old_linux/kernel/events/core.c	2019-03-08 14:28:58.311704459 +0800
++++ linux/kernel/events/core.c	2019-03-12 14:05:54.584111595 +0800
+@@ -212,7 +212,7 @@
+ 				void __user *buffer, size_t *lenp,
+ 				loff_t *ppos)
+ {
+-	int ret = proc_dointvec(table, write, buffer, lenp, ppos);
++	int ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
+ 
+ 	if (ret || !write)
+ 		return ret;
+diff -Naur old_linux/mm/mempolicy.c linux/mm/mempolicy.c
+--- old_linux/mm/mempolicy.c	2019-03-06 10:49:10.712110519 +0800
++++ linux/mm/mempolicy.c	2019-03-12 14:06:21.859712409 +0800
+@@ -984,12 +984,7 @@
+ 		 */
+ 		*policy |= (pol->flags & MPOL_MODE_FLAGS);
+ 	}
+-
+-	if (vma) {
+-		up_read(&current->mm->mmap_sem);
+-		vma = NULL;
+-	}
+-
++	
+ 	err = 0;
+ 	if (nmask) {
+ 		if (mpol_store_user_nodemask(pol)) {
+diff -Naur old_linux/net/dccp/proto.c linux/net/dccp/proto.c
+--- old_linux/net/dccp/proto.c	2019-03-08 11:28:53.252130512 +0800
++++ linux/net/dccp/proto.c	2019-03-12 14:06:52.707260941 +0800
+@@ -785,6 +785,11 @@
+ 	if (skb == NULL)
+ 		goto out_release;
+ 
++	if (sk->sk_state == DCCP_CLOSED) {
++		rc = -ENOTCONN;
++		goto out_discard;
++	}
++
+ 	skb_reserve(skb, sk->sk_prot->max_header);
+ 	rc = memcpy_fromiovec(skb_put(skb, len), msg->msg_iov, len);
+ 	if (rc != 0)

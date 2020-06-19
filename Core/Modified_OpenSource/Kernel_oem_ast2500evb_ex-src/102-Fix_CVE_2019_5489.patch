@@ -1,0 +1,55 @@
+diff -Naur linux.old/include/linux/mm.h linux/include/linux/mm.h
+--- linux.old/include/linux/mm.h	2019-08-12 17:15:55.699440368 +0800
++++ linux/include/linux/mm.h	2019-08-12 17:31:00.559793538 +0800
+@@ -1187,6 +1187,11 @@
+ int set_page_dirty_lock(struct page *page);
+ int clear_page_dirty_for_io(struct page *page);
+ 
++static inline bool vma_is_anonymous(struct vm_area_struct *vma)
++{
++	return !vma->vm_ops;
++}
++
+ /* Is the vma a continuation of the stack vma above it? */
+ static inline int vma_growsdown(struct vm_area_struct *vma, unsigned long addr)
+ {
+diff -Naur linux.old/mm/mincore.c linux/mm/mincore.c
+--- linux.old/mm/mincore.c	2019-08-12 16:23:32.987361224 +0800
++++ linux/mm/mincore.c	2019-08-12 16:29:46.736014166 +0800
+@@ -209,6 +209,23 @@
+ 	} while (pgd++, addr = next, addr != end);
+ }
+ 
++static inline bool can_do_mincore(struct vm_area_struct *vma)
++{
++	if (vma_is_anonymous(vma))
++		return true;
++	if (!vma->vm_file)
++		return false;
++	/*
++	 * Reveal pagecache information only for non-anonymous mappings that
++	 * correspond to the files the calling process could (if tried) open
++	 * for writing; otherwise we'd be including shared non-exclusive
++	 * mappings, which opens a side channel.
++	 */
++	return inode_owner_or_capable(file_inode(vma->vm_file)) ||
++		inode_permission(file_inode(vma->vm_file), MAY_WRITE) == 0;
++}
++
++
+ /*
+  * Do a chunk of "sys_mincore()". We've already checked
+  * all the arguments, we hold the mmap semaphore: we should
+@@ -224,6 +241,12 @@
+ 		return -ENOMEM;
+ 
+ 	end = min(vma->vm_end, addr + (pages << PAGE_SHIFT));
++	if (!can_do_mincore(vma)) {
++		unsigned long pages = DIV_ROUND_UP(end - addr, PAGE_SIZE);
++		memset(vec, 1, pages);
++		return pages;
++	}
++
+ 
+ 	if (is_vm_hugetlb_page(vma))
+ 		mincore_hugetlb_page_range(vma, addr, end, vec);

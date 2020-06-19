@@ -1,0 +1,11 @@
+diff -Naur linux.old/drivers/net/phy/mdio_bus.c linux/drivers/net/phy/mdio_bus.c
+--- linux.old/drivers/net/phy/mdio_bus.c	2019-09-03 15:38:10.411161312 +0800
++++ linux/drivers/net/phy/mdio_bus.c	2019-09-03 15:40:59.513521525 +0800
+@@ -150,7 +150,6 @@
+ 	err = device_register(&bus->dev);
+ 	if (err) {
+ 		pr_err("mii_bus %s failed to register\n", bus->id);
+-		put_device(&bus->dev);
+ 		return -EINVAL;
+ 	}
+ 

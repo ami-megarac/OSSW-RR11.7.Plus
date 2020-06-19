@@ -1,0 +1,23 @@
+diff -Naur linux.old/net/ipv6/output_core.c linux/net/ipv6/output_core.c
+--- linux.old/net/ipv6/output_core.c	2019-07-09 14:04:34.252288480 +0800
++++ linux/net/ipv6/output_core.c	2019-07-09 14:13:08.476283692 +0800
+@@ -18,6 +18,7 @@
+ 
+ 	while (offset <= packet_len) {
+ 		struct ipv6_opt_hdr *exthdr;
++		unsigned int len;
+ 		
+ 		switch (**nexthdr) {
+ 
+@@ -42,7 +43,10 @@
+ 			return -EINVAL;
+ 		exthdr = (struct ipv6_opt_hdr *)(skb_network_header(skb) +
+ 						 offset);
+-		offset += ipv6_optlen(exthdr);
++		len = ipv6_optlen(exthdr);
++		if (len + offset >= IPV6_MAXPLEN)
++			return -EINVAL;
++		offset += len;
+ 		*nexthdr = &exthdr->nexthdr;						 
+ 	}
+ 

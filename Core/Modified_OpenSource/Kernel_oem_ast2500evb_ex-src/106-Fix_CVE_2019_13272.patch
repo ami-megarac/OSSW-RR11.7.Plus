@@ -1,0 +1,100 @@
+diff -Naur linux.old/include/linux/ptrace.h linux/include/linux/ptrace.h
+--- linux.old/include/linux/ptrace.h	2019-09-26 15:37:25.129204671 +0800
++++ linux/include/linux/ptrace.h	2019-09-26 17:09:17.397978322 +0800
+@@ -50,7 +50,8 @@
+ 			  unsigned long addr, unsigned long data);
+ extern void ptrace_notify(int exit_code);
+ extern void __ptrace_link(struct task_struct *child,
+-			  struct task_struct *new_parent);
++			  struct task_struct *new_parent,
++			  const struct cred *ptracer_cred);
+ extern void __ptrace_unlink(struct task_struct *child);
+ extern void exit_ptrace(struct task_struct *tracer);
+ #define PTRACE_MODE_READ	0x01
+@@ -180,7 +181,7 @@
+ 
+ 	if (unlikely(ptrace) && current->ptrace) {
+ 		child->ptrace = current->ptrace;
+-		__ptrace_link(child, current->parent);
++		__ptrace_link(child, current->parent, current->ptracer_cred);
+ 
+ 		if (child->ptrace & PT_SEIZED)
+ 			task_set_jobctl_pending(child, JOBCTL_TRAP_STOP);
+@@ -189,6 +190,8 @@
+ 
+ 		set_tsk_thread_flag(child, TIF_SIGPENDING);
+ 	}
++	else
++		child->ptracer_cred = NULL;
+ }
+ 
+ /**
+diff -Naur linux.old/include/linux/sched.h linux/include/linux/sched.h
+--- linux.old/include/linux/sched.h	2019-09-26 17:17:45.547711766 +0800
++++ linux/include/linux/sched.h	2019-09-26 17:19:02.143880318 +0800
+@@ -1313,6 +1313,7 @@
+ 	struct list_head cpu_timers[3];
+ 
+ /* process credentials */
++	const struct cred __rcu *ptracer_cred; /* Tracer's credentials at attach */
+ 	const struct cred __rcu *real_cred; /* objective and real subjective task
+ 					 * credentials (COW) */
+ 	const struct cred __rcu *cred;	/* effective (overridable) subjective task
+diff -Naur linux.old/kernel/ptrace.c linux/kernel/ptrace.c
+--- linux.old/kernel/ptrace.c	2019-09-26 14:42:15.809121331 +0800
++++ linux/kernel/ptrace.c	2019-09-26 17:11:24.066215643 +0800
+@@ -40,11 +40,18 @@
+  *
+  * Must be called with the tasklist lock write-held.
+  */
+-void __ptrace_link(struct task_struct *child, struct task_struct *new_parent)
++void __ptrace_link(struct task_struct *child, struct task_struct *new_parent,
++		   const struct cred *ptracer_cred)
+ {
+ 	BUG_ON(!list_empty(&child->ptrace_entry));
+ 	list_add(&child->ptrace_entry, &new_parent->ptraced);
+ 	child->parent = new_parent;
++	child->ptracer_cred = get_cred(ptracer_cred);
++}
++
++static void ptrace_link(struct task_struct *child, struct task_struct *new_parent)
++{
++	__ptrace_link(child, new_parent, current_cred());
+ }
+ 
+ /**
+@@ -77,12 +84,15 @@
+  */
+ void __ptrace_unlink(struct task_struct *child)
+ {
++	const struct cred *old_cred;
+ 	BUG_ON(!child->ptrace);
+ 
+ 	child->ptrace = 0;
+ 	child->parent = child->real_parent;
+ 	list_del_init(&child->ptrace_entry);
+-
++	old_cred = child->ptracer_cred;
++	child->ptracer_cred = NULL;
++	put_cred(old_cred);
+ 	spin_lock(&child->sighand->siglock);
+ 
+ 	/*
+@@ -332,7 +342,7 @@
+ 	rcu_read_unlock();
+ 	task->ptrace = flags;
+ 
+-	__ptrace_link(task, current);
++	ptrace_link(task, current);
+ 
+ 	/* SEIZE doesn't trap tracee on attach */
+ 	if (!seize)
+@@ -399,7 +409,7 @@
+ 		 */
+ 		if (!ret && !(current->real_parent->flags & PF_EXITING)) {
+ 			current->ptrace = PT_PTRACED;
+-			__ptrace_link(current, current->real_parent);
++			ptrace_link(current, current->real_parent);
+ 		}
+ 	}
+ 	write_unlock_irq(&tasklist_lock);

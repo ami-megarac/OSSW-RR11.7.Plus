@@ -1,0 +1,42 @@
+--- linux.org/net/rds/rdma.c	2014-08-14 09:38:34.000000000 +0800
++++ linux/net/rds/rdma.c	2018-04-19 11:03:57.891290079 +0800
+@@ -516,6 +516,9 @@
+ 
+ 	local_vec = (struct rds_iovec __user *)(unsigned long) args->local_vec_addr;
+ 
++	if (args->nr_local == 0)
++		return -EINVAL;
++	
+ 	/* figure out the number of pages in the vector */
+ 	for (i = 0; i < args->nr_local; i++) {
+ 		if (copy_from_user(&vec, &local_vec[i],
+@@ -852,6 +855,7 @@
+ err:
+ 	if (page)
+ 		put_page(page);
++	rm->atomic.op_active = 0;
+ 	kfree(rm->atomic.op_notifier);
+ 
+ 	return ret;
+--- linux.org/net/dccp/proto.c	2014-08-14 09:38:34.000000000 +0800
++++ linux/net/dccp/proto.c	2018-04-19 11:15:02.209819219 +0800
+@@ -252,6 +252,7 @@
+ {
+ 	struct inet_connection_sock *icsk = inet_csk(sk);
+ 	struct inet_sock *inet = inet_sk(sk);
++	struct dccp_sock *dp = dccp_sk(sk);
+ 	int err = 0;
+ 	const int old_state = sk->sk_state;
+ 
+@@ -271,6 +272,10 @@
+ 		sk->sk_err = ECONNRESET;
+ 
+ 	dccp_clear_xmit_timers(sk);
++	ccid_hc_rx_delete(dp->dccps_hc_rx_ccid, sk);
++	ccid_hc_tx_delete(dp->dccps_hc_tx_ccid, sk);
++	dp->dccps_hc_rx_ccid = NULL;
++	dp->dccps_hc_tx_ccid = NULL;
+ 
+ 	__skb_queue_purge(&sk->sk_receive_queue);
+ 	__skb_queue_purge(&sk->sk_write_queue);
+

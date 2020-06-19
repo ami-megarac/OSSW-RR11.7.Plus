@@ -1,0 +1,1532 @@
+diff -Naur linux.old/arch/powerpc/platforms/cell/spufs/inode.c linux/arch/powerpc/platforms/cell/spufs/inode.c
+--- linux.old/arch/powerpc/platforms/cell/spufs/inode.c	2020-04-22 11:59:38.675628910 +0800
++++ linux/arch/powerpc/platforms/cell/spufs/inode.c	2020-04-22 17:42:46.689681222 +0800
+@@ -164,7 +164,7 @@
+ 	struct dentry *dentry, *tmp;
+ 
+ 	mutex_lock(&dir->d_inode->i_mutex);
+-	list_for_each_entry_safe(dentry, tmp, &dir->d_subdirs, d_u.d_child) {
++	list_for_each_entry_safe(dentry, tmp, &dir->d_subdirs, d_child) {
+ 		spin_lock(&dentry->d_lock);
+ 		if (!(d_unhashed(dentry)) && dentry->d_inode) {
+ 			dget_dlock(dentry);
+diff -Naur linux.old/drivers/i2c/i2c-core.c linux/drivers/i2c/i2c-core.c
+--- linux.old/drivers/i2c/i2c-core.c	2020-04-22 11:59:38.703628911 +0800
++++ linux/drivers/i2c/i2c-core.c	2020-04-22 18:29:36.887159376 +0800
+@@ -2572,16 +2572,16 @@
+ 				   the underlying bus driver */
+ 		break;
+ 	case I2C_SMBUS_I2C_BLOCK_DATA:
++		if (data->block[0] > I2C_SMBUS_BLOCK_MAX) {
++			dev_err(&adapter->dev, "Invalid block %s size %d\n",
++				read_write == I2C_SMBUS_READ ? "read" : "write",
++				data->block[0]);
++			return -EINVAL;
++		}
+ 		if (read_write == I2C_SMBUS_READ) {
+ 			msg[1].len = data->block[0];
+ 		} else {
+ 			msg[0].len = data->block[0] + 1;
+-			if (msg[0].len > I2C_SMBUS_BLOCK_MAX + 1) {
+-				dev_err(&adapter->dev,
+-					"Invalid block write size %d\n",
+-					data->block[0]);
+-				return -EINVAL;
+-			}
+ 			for (i = 1; i <= data->block[0]; i++)
+ 				msgbuf0[i] = data->block[i];
+ 		}
+diff -Naur linux.old/drivers/staging/lustre/lustre/llite/dcache.c linux/drivers/staging/lustre/lustre/llite/dcache.c
+--- linux.old/drivers/staging/lustre/lustre/llite/dcache.c	2020-04-22 11:59:38.703628911 +0800
++++ linux/drivers/staging/lustre/lustre/llite/dcache.c	2020-04-22 17:43:35.532387817 +0800
+@@ -278,7 +278,7 @@
+ 	       inode->i_ino, inode->i_generation, inode);
+ 
+ 	ll_lock_dcache(inode);
+-	ll_d_hlist_for_each_entry(dentry, p, &inode->i_dentry, d_alias) {
++	ll_d_hlist_for_each_entry(dentry, p, &inode->i_dentry, d_u.d_alias) {
+ 		CDEBUG(D_DENTRY, "dentry in drop %.*s (%p) parent %p "
+ 		       "inode %p flags %d\n", dentry->d_name.len,
+ 		       dentry->d_name.name, dentry, dentry->d_parent,
+diff -Naur linux.old/drivers/staging/lustre/lustre/llite/llite_lib.c linux/drivers/staging/lustre/lustre/llite/llite_lib.c
+--- linux.old/drivers/staging/lustre/lustre/llite/llite_lib.c	2020-04-22 11:59:38.703628911 +0800
++++ linux/drivers/staging/lustre/lustre/llite/llite_lib.c	2020-04-22 17:44:00.465306137 +0800
+@@ -678,7 +678,7 @@
+ 		return;
+ 
+ 	list_for_each(tmp, &dentry->d_subdirs) {
+-		struct dentry *d = list_entry(tmp, struct dentry, d_u.d_child);
++		struct dentry *d = list_entry(tmp, struct dentry, d_child);
+ 		lustre_dump_dentry(d, recur - 1);
+ 	}
+ }
+diff -Naur linux.old/drivers/staging/lustre/lustre/llite/namei.c linux/drivers/staging/lustre/lustre/llite/namei.c
+--- linux.old/drivers/staging/lustre/lustre/llite/namei.c	2020-04-22 11:59:38.703628911 +0800
++++ linux/drivers/staging/lustre/lustre/llite/namei.c	2020-04-22 17:45:01.616260702 +0800
+@@ -175,7 +175,7 @@
+ 	struct ll_d_hlist_node *p;
+ 
+ 	ll_lock_dcache(dir);
+-	ll_d_hlist_for_each_entry(dentry, p, &dir->i_dentry, d_alias) {
++	ll_d_hlist_for_each_entry(dentry, p, &dir->i_dentry, d_u.d_alias) {
+ 		spin_lock(&dentry->d_lock);
+ 		if (!list_empty(&dentry->d_subdirs)) {
+ 			struct dentry *child;
+@@ -364,7 +364,7 @@
+ 	discon_alias = invalid_alias = NULL;
+ 
+ 	ll_lock_dcache(inode);
+-	ll_d_hlist_for_each_entry(alias, p, &inode->i_dentry, d_alias) {
++	ll_d_hlist_for_each_entry(alias, p, &inode->i_dentry, d_u.d_alias) {
+ 		LASSERT(alias != dentry);
+ 
+ 		spin_lock(&alias->d_lock);
+@@ -953,7 +953,7 @@
+ {
+ 	struct dentry *parent, *child;
+ 
+-	parent = ll_d_hlist_entry(dir->i_dentry, struct dentry, d_alias);
++	parent = ll_d_hlist_entry(dir->i_dentry, struct dentry, d_u.d_alias);
+ 	child = d_lookup(parent, name);
+ 	if (child) {
+ 		if (child->d_inode)
+diff -Naur linux.old/drivers/usb/mon/mon_text.c linux/drivers/usb/mon/mon_text.c
+--- linux.old/drivers/usb/mon/mon_text.c	2020-04-22 11:59:38.703628911 +0800
++++ linux/drivers/usb/mon/mon_text.c	2020-04-22 18:36:14.371303891 +0800
+@@ -82,6 +82,8 @@
+ 
+ 	wait_queue_head_t wait;
+ 	int printf_size;
++	size_t printf_offset;
++	size_t printf_togo;
+ 	char *printf_buf;
+ 	struct mutex printf_lock;
+ 
+@@ -373,73 +375,98 @@
+ 	return rc;
+ }
+ 
+-/*
+- * For simplicity, we read one record in one system call and throw out
+- * what does not fit. This means that the following does not work:
+- *   dd if=/dbg/usbmon/0t bs=10
+- * Also, we do not allow seeks and do not bother advancing the offset.
+- */
++static ssize_t mon_text_copy_to_user(struct mon_reader_text *rp,
++    char __user * const buf, const size_t nbytes)
++{
++	const size_t togo = min(nbytes, rp->printf_togo);
++
++	if (copy_to_user(buf, &rp->printf_buf[rp->printf_offset], togo))
++		return -EFAULT;
++	rp->printf_togo -= togo;
++	rp->printf_offset += togo;
++	return togo;
++}
++
++/* ppos is not advanced since the llseek operation is not permitted. */
+ static ssize_t mon_text_read_t(struct file *file, char __user *buf,
+ 				size_t nbytes, loff_t *ppos)
+ {
+ 	struct mon_reader_text *rp = file->private_data;
+ 	struct mon_event_text *ep;
+ 	struct mon_text_ptr ptr;
++	ssize_t ret;
+ 
+-	if (IS_ERR(ep = mon_text_read_wait(rp, file)))
+-		return PTR_ERR(ep);
+ 	mutex_lock(&rp->printf_lock);
+-	ptr.cnt = 0;
+-	ptr.pbuf = rp->printf_buf;
+-	ptr.limit = rp->printf_size;
+-
+-	mon_text_read_head_t(rp, &ptr, ep);
+-	mon_text_read_statset(rp, &ptr, ep);
+-	ptr.cnt += snprintf(ptr.pbuf + ptr.cnt, ptr.limit - ptr.cnt,
+-	    " %d", ep->length);
+-	mon_text_read_data(rp, &ptr, ep);
++	if (rp->printf_togo == 0) {
++
++		ep = mon_text_read_wait(rp, file);
++		if (IS_ERR(ep)) {
++			mutex_unlock(&rp->printf_lock);
++			return PTR_ERR(ep);
++		}
++		ptr.cnt = 0;
++		ptr.pbuf = rp->printf_buf;
++		ptr.limit = rp->printf_size;
++
++		mon_text_read_head_t(rp, &ptr, ep);
++		mon_text_read_statset(rp, &ptr, ep);
++		ptr.cnt += snprintf(ptr.pbuf + ptr.cnt, ptr.limit - ptr.cnt,
++		    " %d", ep->length);
++		mon_text_read_data(rp, &ptr, ep);
+ 
+-	if (copy_to_user(buf, rp->printf_buf, ptr.cnt))
+-		ptr.cnt = -EFAULT;
++		rp->printf_togo = ptr.cnt;
++		rp->printf_offset = 0;
++
++		kmem_cache_free(rp->e_slab, ep);
++	}
++
++	ret = mon_text_copy_to_user(rp, buf, nbytes);
+ 	mutex_unlock(&rp->printf_lock);
+-	kmem_cache_free(rp->e_slab, ep);
+-	return ptr.cnt;
++	return ret;
+ }
+ 
++/* ppos is not advanced since the llseek operation is not permitted. */
+ static ssize_t mon_text_read_u(struct file *file, char __user *buf,
+ 				size_t nbytes, loff_t *ppos)
+ {
+ 	struct mon_reader_text *rp = file->private_data;
+ 	struct mon_event_text *ep;
+ 	struct mon_text_ptr ptr;
++	ssize_t ret;
+ 
+-	if (IS_ERR(ep = mon_text_read_wait(rp, file)))
+-		return PTR_ERR(ep);
+ 	mutex_lock(&rp->printf_lock);
+-	ptr.cnt = 0;
+-	ptr.pbuf = rp->printf_buf;
+-	ptr.limit = rp->printf_size;
++	if (rp->printf_togo == 0) {
++		ep = mon_text_read_wait(rp, file);
++		if (IS_ERR(ep)) {
++			mutex_unlock(&rp->printf_lock);
++			return PTR_ERR(ep);
++		}
++		ptr.cnt = 0;
++		ptr.pbuf = rp->printf_buf;
++		ptr.limit = rp->printf_size;
++
++		mon_text_read_head_u(rp, &ptr, ep);
++		if (ep->type == 'E') {
++			mon_text_read_statset(rp, &ptr, ep);
++		} else if (ep->xfertype == USB_ENDPOINT_XFER_ISOC) {
++			mon_text_read_isostat(rp, &ptr, ep);
++			mon_text_read_isodesc(rp, &ptr, ep);
++		} else if (ep->xfertype == USB_ENDPOINT_XFER_INT) {
++			mon_text_read_intstat(rp, &ptr, ep);
++		} else {
++			mon_text_read_statset(rp, &ptr, ep);
++		}
++		ptr.cnt += snprintf(ptr.pbuf + ptr.cnt, ptr.limit - ptr.cnt,
++		    " %d", ep->length);
++		mon_text_read_data(rp, &ptr, ep);
++		rp->printf_togo = ptr.cnt;
++		rp->printf_offset = 0;
+ 
+-	mon_text_read_head_u(rp, &ptr, ep);
+-	if (ep->type == 'E') {
+-		mon_text_read_statset(rp, &ptr, ep);
+-	} else if (ep->xfertype == USB_ENDPOINT_XFER_ISOC) {
+-		mon_text_read_isostat(rp, &ptr, ep);
+-		mon_text_read_isodesc(rp, &ptr, ep);
+-	} else if (ep->xfertype == USB_ENDPOINT_XFER_INT) {
+-		mon_text_read_intstat(rp, &ptr, ep);
+-	} else {
+-		mon_text_read_statset(rp, &ptr, ep);
++		kmem_cache_free(rp->e_slab, ep);
+ 	}
+-	ptr.cnt += snprintf(ptr.pbuf + ptr.cnt, ptr.limit - ptr.cnt,
+-	    " %d", ep->length);
+-	mon_text_read_data(rp, &ptr, ep);
+-
+-	if (copy_to_user(buf, rp->printf_buf, ptr.cnt))
+-		ptr.cnt = -EFAULT;
++	ret = mon_text_copy_to_user(rp, buf, nbytes);
+ 	mutex_unlock(&rp->printf_lock);
+-	kmem_cache_free(rp->e_slab, ep);
+-	return ptr.cnt;
++	return ret;
+ }
+ 
+ static struct mon_event_text *mon_text_read_wait(struct mon_reader_text *rp,
+diff -Naur linux.old/fs/affs/amigaffs.c linux/fs/affs/amigaffs.c
+--- linux.old/fs/affs/amigaffs.c	2020-04-22 11:59:38.663628910 +0800
++++ linux/fs/affs/amigaffs.c	2020-04-22 17:45:37.644302063 +0800
+@@ -126,7 +126,7 @@
+ {
+ 	struct dentry *dentry;
+ 	spin_lock(&inode->i_lock);
+-	hlist_for_each_entry(dentry, &inode->i_dentry, d_alias) {
++	hlist_for_each_entry(dentry, &inode->i_dentry, d_u.d_alias) {
+ 		if (entry_ino == (u32)(long)dentry->d_fsdata) {
+ 			dentry->d_fsdata = (void *)inode->i_ino;
+ 			break;
+diff -Naur linux.old/fs/autofs4/expire.c linux/fs/autofs4/expire.c
+--- linux.old/fs/autofs4/expire.c	2020-04-22 11:59:38.599628908 +0800
++++ linux/fs/autofs4/expire.c	2020-04-22 17:47:16.502863403 +0800
+@@ -91,7 +91,7 @@
+ 	spin_lock(&root->d_lock);
+ 
+ 	if (prev)
+-		next = prev->d_u.d_child.next;
++		next = prev->d_child.next;
+ 	else {
+ 		prev = dget_dlock(root);
+ 		next = prev->d_subdirs.next;
+@@ -105,13 +105,13 @@
+ 		return NULL;
+ 	}
+ 
+-	q = list_entry(next, struct dentry, d_u.d_child);
++	q = list_entry(next, struct dentry, d_child);
+ 
+ 	spin_lock_nested(&q->d_lock, DENTRY_D_LOCK_NESTED);
+ 	/* Already gone or negative dentry (under construction) - try next */
+ 	if (!d_count(q) || !simple_positive(q)) {
+ 		spin_unlock(&q->d_lock);
+-		next = q->d_u.d_child.next;
++		next = q->d_child.next;
+ 		goto cont;
+ 	}
+ 	dget_dlock(q);
+@@ -161,13 +161,13 @@
+ 				goto relock;
+ 			}
+ 			spin_unlock(&p->d_lock);
+-			next = p->d_u.d_child.next;
++			next = p->d_child.next;
+ 			p = parent;
+ 			if (next != &parent->d_subdirs)
+ 				break;
+ 		}
+ 	}
+-	ret = list_entry(next, struct dentry, d_u.d_child);
++	ret = list_entry(next, struct dentry, d_child);
+ 
+ 	spin_lock_nested(&ret->d_lock, DENTRY_D_LOCK_NESTED);
+ 	/* Negative dentry - try next */
+@@ -461,7 +461,7 @@
+ 	spin_lock(&sbi->lookup_lock);
+ 	spin_lock(&expired->d_parent->d_lock);
+ 	spin_lock_nested(&expired->d_lock, DENTRY_D_LOCK_NESTED);
+-	list_move(&expired->d_parent->d_subdirs, &expired->d_u.d_child);
++	list_move(&expired->d_parent->d_subdirs, &expired->d_child);
+ 	spin_unlock(&expired->d_lock);
+ 	spin_unlock(&expired->d_parent->d_lock);
+ 	spin_unlock(&sbi->lookup_lock);
+diff -Naur linux.old/fs/autofs4/root.c linux/fs/autofs4/root.c
+--- linux.old/fs/autofs4/root.c	2020-04-22 11:59:38.587628908 +0800
++++ linux/fs/autofs4/root.c	2020-04-22 17:47:34.884272145 +0800
+@@ -655,7 +655,7 @@
+ 	/* only consider parents below dentrys in the root */
+ 	if (IS_ROOT(parent->d_parent))
+ 		return;
+-	d_child = &dentry->d_u.d_child;
++	d_child = &dentry->d_child;
+ 	/* Set parent managed if it's becoming empty */
+ 	if (d_child->next == &parent->d_subdirs &&
+ 	    d_child->prev == &parent->d_subdirs)
+diff -Naur linux.old/fs/ceph/dir.c linux/fs/ceph/dir.c
+--- linux.old/fs/ceph/dir.c	2020-04-22 11:59:38.655628909 +0800
++++ linux/fs/ceph/dir.c	2020-04-22 17:58:31.470579611 +0800
+@@ -111,7 +111,7 @@
+ /*
+  * When possible, we try to satisfy a readdir by peeking at the
+  * dcache.  We make this work by carefully ordering dentries on
+- * d_u.d_child when we initially get results back from the MDS, and
++ * d_child when we initially get results back from the MDS, and
+  * falling back to a "normal" sync readdir if any dentries in the dir
+  * are dropped.
+  *
+@@ -146,11 +146,11 @@
+ 		p = parent->d_subdirs.prev;
+ 		dout(" initial p %p/%p\n", p->prev, p->next);
+ 	} else {
+-		p = last->d_u.d_child.prev;
++		p = last->d_child.prev;
+ 	}
+ 
+ more:
+-	dentry = list_entry(p, struct dentry, d_u.d_child);
++	dentry = list_entry(p, struct dentry, d_child);
+ 	di = ceph_dentry(dentry);
+ 	while (1) {
+ 		dout(" p %p/%p %s d_subdirs %p/%p\n", p->prev, p->next,
+@@ -172,7 +172,7 @@
+ 		     !dentry->d_inode ? " null" : "");
+ 		spin_unlock(&dentry->d_lock);
+ 		p = p->prev;
+-		dentry = list_entry(p, struct dentry, d_u.d_child);
++		dentry = list_entry(p, struct dentry, d_child);
+ 		di = ceph_dentry(dentry);
+ 	}
+ 
+diff -Naur linux.old/fs/ceph/inode.c linux/fs/ceph/inode.c
+--- linux.old/fs/ceph/inode.c	2020-04-22 11:59:38.655628909 +0800
++++ linux/fs/ceph/inode.c	2020-04-22 17:58:59.701290169 +0800
+@@ -1289,7 +1289,7 @@
+ 			/* reorder parent's d_subdirs */
+ 			spin_lock(&parent->d_lock);
+ 			spin_lock_nested(&dn->d_lock, DENTRY_D_LOCK_NESTED);
+-			list_move(&dn->d_u.d_child, &parent->d_subdirs);
++			list_move(&dn->d_child, &parent->d_subdirs);
+ 			spin_unlock(&dn->d_lock);
+ 			spin_unlock(&parent->d_lock);
+ 		}
+diff -Naur linux.old/fs/cifs/inode.c linux/fs/cifs/inode.c
+--- linux.old/fs/cifs/inode.c	2020-04-22 11:59:38.607628908 +0800
++++ linux/fs/cifs/inode.c	2020-04-22 17:59:43.393019040 +0800
+@@ -883,7 +883,7 @@
+ 	struct dentry *dentry;
+ 
+ 	spin_lock(&inode->i_lock);
+-	hlist_for_each_entry(dentry, &inode->i_dentry, d_alias) {
++	hlist_for_each_entry(dentry, &inode->i_dentry, d_u.d_alias) {
+ 		if (!d_unhashed(dentry) || IS_ROOT(dentry)) {
+ 			spin_unlock(&inode->i_lock);
+ 			return true;
+diff -Naur linux.old/fs/coda/cache.c linux/fs/coda/cache.c
+--- linux.old/fs/coda/cache.c	2020-04-22 11:59:38.663628910 +0800
++++ linux/fs/coda/cache.c	2020-04-22 18:00:10.603058457 +0800
+@@ -92,7 +92,7 @@
+ 	struct dentry *de;
+ 
+ 	spin_lock(&parent->d_lock);
+-	list_for_each_entry(de, &parent->d_subdirs, d_u.d_child) {
++	list_for_each_entry(de, &parent->d_subdirs, d_child) {
+ 		/* don't know what to do with negative dentries */
+ 		if (de->d_inode ) 
+ 			coda_flag_inode(de->d_inode, flag);
+diff -Naur linux.old/fs/dcache.c linux/fs/dcache.c
+--- linux.old/fs/dcache.c	2020-04-22 11:59:38.655628909 +0800
++++ linux/fs/dcache.c	2020-04-22 18:08:35.783079244 +0800
+@@ -44,7 +44,7 @@
+ /*
+  * Usage:
+  * dcache->d_inode->i_lock protects:
+- *   - i_dentry, d_alias, d_inode of aliases
++ *   - i_dentry, d_u.d_alias, d_inode of aliases
+  * dcache_hash_bucket lock protects:
+  *   - the dcache hash table
+  * s_anon bl list spinlock protects:
+@@ -59,7 +59,7 @@
+  *   - d_unhashed()
+  *   - d_parent and d_subdirs
+  *   - childrens' d_child and d_parent
+- *   - d_alias, d_inode
++ *   - d_u.d_alias, d_inode
+  *
+  * Ordering:
+  * dentry->d_inode->i_lock
+@@ -240,7 +240,6 @@
+ {
+ 	struct dentry *dentry = container_of(head, struct dentry, d_u.d_rcu);
+ 
+-	WARN_ON(!hlist_unhashed(&dentry->d_alias));
+ 	if (dname_external(dentry))
+ 		kfree(dentry->d_name.name);
+ 	kmem_cache_free(dentry_cache, dentry); 
+@@ -293,6 +292,7 @@
+ 	if (dentry->d_op && dentry->d_op->d_release)
+ 		dentry->d_op->d_release(dentry);
+ 
++	WARN_ON(!hlist_unhashed(&dentry->d_u.d_alias));
+ 	/* if dentry was never visible to RCU, immediate free is OK */
+ 	if (!(dentry->d_flags & DCACHE_RCUACCESS))
+ 		__d_free(&dentry->d_u.d_rcu);
+@@ -326,7 +326,7 @@
+ 	struct inode *inode = dentry->d_inode;
+ 	if (inode) {
+ 		dentry->d_inode = NULL;
+-		hlist_del_init(&dentry->d_alias);
++		hlist_del_init(&dentry->d_u.d_alias);
+ 		spin_unlock(&dentry->d_lock);
+ 		spin_unlock(&inode->i_lock);
+ 		if (!inode->i_nlink)
+@@ -351,7 +351,7 @@
+ 	struct inode *inode = dentry->d_inode;
+ 	__d_clear_type(dentry);
+ 	dentry->d_inode = NULL;
+-	hlist_del_init(&dentry->d_alias);
++	hlist_del_init(&dentry->d_u.d_alias);
+ 	dentry_rcuwalk_barrier(dentry);
+ 	spin_unlock(&dentry->d_lock);
+ 	spin_unlock(&inode->i_lock);
+@@ -473,7 +473,7 @@
+ 	__releases(parent->d_lock)
+ 	__releases(dentry->d_inode->i_lock)
+ {
+-	list_del(&dentry->d_u.d_child);
++	list_del(&dentry->d_child);
+ 	/*
+ 	 * Inform d_walk() that we are no longer attached to the
+ 	 * dentry tree
+@@ -775,7 +775,7 @@
+ 
+ again:
+ 	discon_alias = NULL;
+-	hlist_for_each_entry(alias, &inode->i_dentry, d_alias) {
++	hlist_for_each_entry(alias, &inode->i_dentry, d_u.d_alias) {
+ 		spin_lock(&alias->d_lock);
+  		if (S_ISDIR(inode->i_mode) || !d_unhashed(alias)) {
+ 			if (IS_ROOT(alias) &&
+@@ -828,7 +828,7 @@
+ 	struct dentry *dentry;
+ restart:
+ 	spin_lock(&inode->i_lock);
+-	hlist_for_each_entry(dentry, &inode->i_dentry, d_alias) {
++	hlist_for_each_entry(dentry, &inode->i_dentry, d_u.d_alias) {
+ 		spin_lock(&dentry->d_lock);
+ 		if (!dentry->d_lockref.count) {
+ 			/*
+@@ -1129,7 +1129,7 @@
+ resume:
+ 	while (next != &this_parent->d_subdirs) {
+ 		struct list_head *tmp = next;
+-		struct dentry *dentry = list_entry(tmp, struct dentry, d_u.d_child);
++		struct dentry *dentry = list_entry(tmp, struct dentry, d_child);
+ 		next = tmp->next;
+ 
+ 		spin_lock_nested(&dentry->d_lock, DENTRY_D_LOCK_NESTED);
+@@ -1181,7 +1181,7 @@
+ 			goto rename_retry;
+ 		}
+ 		rcu_read_unlock();
+-		next = child->d_u.d_child.next;
++		next = child->d_child.next;
+ 		goto resume;
+ 	}
+ 	if (need_seqretry(&rename_lock, seq)) {
+@@ -1562,8 +1562,8 @@
+ 	INIT_HLIST_BL_NODE(&dentry->d_hash);
+ 	INIT_LIST_HEAD(&dentry->d_lru);
+ 	INIT_LIST_HEAD(&dentry->d_subdirs);
+-	INIT_HLIST_NODE(&dentry->d_alias);
+-	INIT_LIST_HEAD(&dentry->d_u.d_child);
++	INIT_HLIST_NODE(&dentry->d_u.d_alias);
++	INIT_LIST_HEAD(&dentry->d_child);
+ 	d_set_d_op(dentry, dentry->d_sb->s_d_op);
+ 
+ 	this_cpu_inc(nr_dentry);
+@@ -1593,7 +1593,7 @@
+ 	 */
+ 	__dget_dlock(parent);
+ 	dentry->d_parent = parent;
+-	list_add(&dentry->d_u.d_child, &parent->d_subdirs);
++	list_add(&dentry->d_child, &parent->d_subdirs);
+ 	spin_unlock(&parent->d_lock);
+ 
+ 	return dentry;
+@@ -1686,7 +1686,7 @@
+ 	spin_lock(&dentry->d_lock);
+ 	__d_set_type(dentry, add_flags);
+ 	if (inode)
+-		hlist_add_head(&dentry->d_alias, &inode->i_dentry);
++		hlist_add_head(&dentry->d_u.d_alias, &inode->i_dentry);
+ 	dentry->d_inode = inode;
+ 	dentry_rcuwalk_barrier(dentry);
+ 	spin_unlock(&dentry->d_lock);
+@@ -1710,7 +1710,7 @@
+  
+ void d_instantiate(struct dentry *entry, struct inode * inode)
+ {
+-	BUG_ON(!hlist_unhashed(&entry->d_alias));
++	BUG_ON(!hlist_unhashed(&entry->d_u.d_alias));
+ 	if (inode)
+ 		spin_lock(&inode->i_lock);
+ 	__d_instantiate(entry, inode);
+@@ -1749,7 +1749,7 @@
+ 		return NULL;
+ 	}
+ 
+-	hlist_for_each_entry(alias, &inode->i_dentry, d_alias) {
++	hlist_for_each_entry(alias, &inode->i_dentry, d_u.d_alias) {
+ 		/*
+ 		 * Don't need alias->d_lock here, because aliases with
+ 		 * d_parent == entry->d_parent are not subject to name or
+@@ -1775,7 +1775,7 @@
+ {
+ 	struct dentry *result;
+ 
+-	BUG_ON(!hlist_unhashed(&entry->d_alias));
++	BUG_ON(!hlist_unhashed(&entry->d_u.d_alias));
+ 
+ 	if (inode)
+ 		spin_lock(&inode->i_lock);
+@@ -1806,7 +1806,7 @@
+  */
+ int d_instantiate_no_diralias(struct dentry *entry, struct inode *inode)
+ {
+-	BUG_ON(!hlist_unhashed(&entry->d_alias));
++	BUG_ON(!hlist_unhashed(&entry->d_u.d_alias));
+ 
+ 	spin_lock(&inode->i_lock);
+ 	if (S_ISDIR(inode->i_mode) && !hlist_empty(&inode->i_dentry)) {
+@@ -1845,7 +1845,7 @@
+ 
+ 	if (hlist_empty(&inode->i_dentry))
+ 		return NULL;
+-	alias = hlist_entry(inode->i_dentry.first, struct dentry, d_alias);
++	alias = hlist_entry(inode->i_dentry.first, struct dentry, d_u.d_alias);
+ 	__dget(alias);
+ 	return alias;
+ }
+@@ -1922,7 +1922,7 @@
+ 	spin_lock(&tmp->d_lock);
+ 	tmp->d_inode = inode;
+ 	tmp->d_flags |= add_flags;
+-	hlist_add_head(&tmp->d_alias, &inode->i_dentry);
++	hlist_add_head(&tmp->d_u.d_alias, &inode->i_dentry);
+ 	hlist_bl_lock(&tmp->d_sb->s_anon);
+ 	hlist_bl_add_head(&tmp->d_hash, &tmp->d_sb->s_anon);
+ 	hlist_bl_unlock(&tmp->d_sb->s_anon);
+@@ -2365,7 +2365,7 @@
+ 	struct dentry *child;
+ 
+ 	spin_lock(&dparent->d_lock);
+-	list_for_each_entry(child, &dparent->d_subdirs, d_u.d_child) {
++	list_for_each_entry(child, &dparent->d_subdirs, d_child) {
+ 		if (dentry == child) {
+ 			spin_lock_nested(&dentry->d_lock, DENTRY_D_LOCK_NESTED);
+ 			__dget_dlock(dentry);
+@@ -2612,8 +2612,8 @@
+ 	/* Unhash the target: dput() will then get rid of it */
+ 	__d_drop(target);
+ 
+-	list_del(&dentry->d_u.d_child);
+-	list_del(&target->d_u.d_child);
++	list_del(&dentry->d_child);
++	list_del(&target->d_child);
+ 
+ 	/* Switch the names.. */
+ 	switch_names(dentry, target);
+@@ -2623,15 +2623,15 @@
+ 	if (IS_ROOT(dentry)) {
+ 		dentry->d_parent = target->d_parent;
+ 		target->d_parent = target;
+-		INIT_LIST_HEAD(&target->d_u.d_child);
++		INIT_LIST_HEAD(&target->d_child);
+ 	} else {
+ 		swap(dentry->d_parent, target->d_parent);
+ 
+ 		/* And add them back to the (new) parent lists */
+-		list_add(&target->d_u.d_child, &target->d_parent->d_subdirs);
++		list_add(&target->d_child, &target->d_parent->d_subdirs);
+ 	}
+ 
+-	list_add(&dentry->d_u.d_child, &dentry->d_parent->d_subdirs);
++	list_add(&dentry->d_child, &dentry->d_parent->d_subdirs);
+ 
+ 	write_seqcount_end(&target->d_seq);
+ 	write_seqcount_end(&dentry->d_seq);
+@@ -2738,9 +2738,9 @@
+ 	swap(dentry->d_name.hash, anon->d_name.hash);
+ 
+ 	dentry->d_parent = dentry;
+-	list_del_init(&dentry->d_u.d_child);
++	list_del_init(&dentry->d_child);
+ 	anon->d_parent = dparent;
+-	list_move(&anon->d_u.d_child, &dparent->d_subdirs);
++	list_move(&anon->d_child, &dparent->d_subdirs);
+ 
+ 	write_seqcount_end(&dentry->d_seq);
+ 	write_seqcount_end(&anon->d_seq);
+@@ -2930,6 +2930,13 @@
+ 
+ 		if (dentry == vfsmnt->mnt_root || IS_ROOT(dentry)) {
+ 			struct mount *parent = ACCESS_ONCE(mnt->mnt_parent);
++			/* Escaped? */
++			if (dentry != vfsmnt->mnt_root) {
++				bptr = *buffer;
++				blen = *buflen;
++				error = 3;
++				break;
++			}
+ 			/* Global root? */
+ 			if (mnt != parent) {
+ 				dentry = ACCESS_ONCE(mnt->mnt_mountpoint);
+@@ -3366,7 +3373,7 @@
+ {
+ 	inode_dec_link_count(inode);
+ 	BUG_ON(dentry->d_name.name != dentry->d_iname ||
+-		!hlist_unhashed(&dentry->d_alias) ||
++		!hlist_unhashed(&dentry->d_u.d_alias) ||
+ 		!d_unlinked(dentry));
+ 	spin_lock(&dentry->d_parent->d_lock);
+ 	spin_lock_nested(&dentry->d_lock, DENTRY_D_LOCK_NESTED);
+diff -Naur linux.old/fs/debugfs/inode.c linux/fs/debugfs/inode.c
+--- linux.old/fs/debugfs/inode.c	2020-04-22 11:59:38.663628910 +0800
++++ linux/fs/debugfs/inode.c	2020-04-22 18:09:03.278273144 +0800
+@@ -545,7 +545,7 @@
+ 	parent = dentry;
+  down:
+ 	mutex_lock(&parent->d_inode->i_mutex);
+-	list_for_each_entry_safe(child, next, &parent->d_subdirs, d_u.d_child) {
++	list_for_each_entry(child, &parent->d_subdirs, d_child) {
+ 		if (!debugfs_positive(child))
+ 			continue;
+ 
+diff -Naur linux.old/fs/exec.c linux/fs/exec.c
+--- linux.old/fs/exec.c	2020-04-22 11:59:38.607628908 +0800
++++ linux/fs/exec.c	2020-04-22 17:12:23.388897929 +0800
+@@ -1307,6 +1307,53 @@
+ 	spin_unlock(&p->fs->lock);
+ }
+ 
++static void bprm_fill_uid(struct linux_binprm *bprm)
++{
++	struct inode *inode;
++	unsigned int mode;
++	kuid_t uid;
++	kgid_t gid;
++
++	/* clear any previous set[ug]id data from a previous binary */
++	bprm->cred->euid = current_euid();
++	bprm->cred->egid = current_egid();
++
++	if (bprm->file->f_path.mnt->mnt_flags & MNT_NOSUID)
++		return;
++
++	if (current->no_new_privs)
++		return;
++
++	inode = file_inode(bprm->file);
++	mode = ACCESS_ONCE(inode->i_mode);
++	if (!(mode & (S_ISUID|S_ISGID)))
++		return;
++
++	/* Be careful if suid/sgid is set */
++	mutex_lock(&inode->i_mutex);
++
++	/* reload atomically mode/uid/gid now that lock held */
++	mode = inode->i_mode;
++	uid = inode->i_uid;
++	gid = inode->i_gid;
++	mutex_unlock(&inode->i_mutex);
++
++	/* We ignore suid/sgid if there are no mappings for them in the ns */
++	if (!kuid_has_mapping(bprm->cred->user_ns, uid) ||
++		 !kgid_has_mapping(bprm->cred->user_ns, gid))
++		return;
++
++	if (mode & S_ISUID) {
++		bprm->per_clear |= PER_CLEAR_ON_SETID;
++		bprm->cred->euid = uid;
++	}
++
++	if ((mode & (S_ISGID | S_IXGRP)) == (S_ISGID | S_IXGRP)) {
++		bprm->per_clear |= PER_CLEAR_ON_SETID;
++		bprm->cred->egid = gid;
++	}
++}
++
+ /*
+  * Fill the binprm structure from the inode.
+  * Check permissions, then read the first 128 (BINPRM_BUF_SIZE) bytes
+@@ -1315,37 +1362,9 @@
+  */
+ int prepare_binprm(struct linux_binprm *bprm)
+ {
+-	struct inode *inode = file_inode(bprm->file);
+-	umode_t mode = inode->i_mode;
+ 	int retval;
+ 
+-
+-	/* clear any previous set[ug]id data from a previous binary */
+-	bprm->cred->euid = current_euid();
+-	bprm->cred->egid = current_egid();
+-
+-	if (!(bprm->file->f_path.mnt->mnt_flags & MNT_NOSUID) &&
+-	    !current->no_new_privs &&
+-	    kuid_has_mapping(bprm->cred->user_ns, inode->i_uid) &&
+-	    kgid_has_mapping(bprm->cred->user_ns, inode->i_gid)) {
+-		/* Set-uid? */
+-		if (mode & S_ISUID) {
+-			bprm->per_clear |= PER_CLEAR_ON_SETID;
+-			bprm->cred->euid = inode->i_uid;
+-		}
+-
+-		/* Set-gid? */
+-		/*
+-		 * If setgid is set but no group execute bit then this
+-		 * is a candidate for mandatory locking, not a setgid
+-		 * executable.
+-		 */
+-		if ((mode & (S_ISGID | S_IXGRP)) == (S_ISGID | S_IXGRP)) {
+-			bprm->per_clear |= PER_CLEAR_ON_SETID;
+-			bprm->cred->egid = inode->i_gid;
+-		}
+-	}
+-
++	bprm_fill_uid(bprm);
+ 	/* fill in binprm security blob */
+ 	retval = security_bprm_set_creds(bprm);
+ 	if (retval)
+diff -Naur linux.old/fs/exportfs/expfs.c linux/fs/exportfs/expfs.c
+--- linux.old/fs/exportfs/expfs.c	2020-04-22 11:59:38.635628909 +0800
++++ linux/fs/exportfs/expfs.c	2020-04-22 18:10:03.254992855 +0800
+@@ -50,7 +50,7 @@
+ 
+ 	inode = result->d_inode;
+ 	spin_lock(&inode->i_lock);
+-	hlist_for_each_entry(dentry, &inode->i_dentry, d_alias) {
++	hlist_for_each_entry(dentry, &inode->i_dentry, d_u.d_alias) {
+ 		dget(dentry);
+ 		spin_unlock(&inode->i_lock);
+ 		if (toput)
+diff -Naur linux.old/fs/libfs.c linux/fs/libfs.c
+--- linux.old/fs/libfs.c	2020-04-22 11:59:38.615628908 +0800
++++ linux/fs/libfs.c	2020-04-22 18:12:20.944553363 +0800
+@@ -113,18 +113,18 @@
+ 
+ 			spin_lock(&dentry->d_lock);
+ 			/* d_lock not required for cursor */
+-			list_del(&cursor->d_u.d_child);
++			list_del(&cursor->d_child);
+ 			p = dentry->d_subdirs.next;
+ 			while (n && p != &dentry->d_subdirs) {
+ 				struct dentry *next;
+-				next = list_entry(p, struct dentry, d_u.d_child);
++				next = list_entry(p, struct dentry, d_child);
+ 				spin_lock_nested(&next->d_lock, DENTRY_D_LOCK_NESTED);
+ 				if (simple_positive(next))
+ 					n--;
+ 				spin_unlock(&next->d_lock);
+ 				p = p->next;
+ 			}
+-			list_add_tail(&cursor->d_u.d_child, p);
++			list_add_tail(&cursor->d_child, p);
+ 			spin_unlock(&dentry->d_lock);
+ 		}
+ 	}
+@@ -149,7 +149,7 @@
+ {
+ 	struct dentry *dentry = file->f_path.dentry;
+ 	struct dentry *cursor = file->private_data;
+-	struct list_head *p, *q = &cursor->d_u.d_child;
++	struct list_head *p, *q = &cursor->d_child;
+ 
+ 	if (!dir_emit_dots(file, ctx))
+ 		return 0;
+@@ -158,7 +158,7 @@
+ 		list_move(q, &dentry->d_subdirs);
+ 
+ 	for (p = q->next; p != &dentry->d_subdirs; p = p->next) {
+-		struct dentry *next = list_entry(p, struct dentry, d_u.d_child);
++		struct dentry *next = list_entry(p, struct dentry, d_child);
+ 		spin_lock_nested(&next->d_lock, DENTRY_D_LOCK_NESTED);
+ 		if (!simple_positive(next)) {
+ 			spin_unlock(&next->d_lock);
+@@ -286,7 +286,7 @@
+ 	int ret = 0;
+ 
+ 	spin_lock(&dentry->d_lock);
+-	list_for_each_entry(child, &dentry->d_subdirs, d_u.d_child) {
++	list_for_each_entry(child, &dentry->d_subdirs, d_child) {
+ 		spin_lock_nested(&child->d_lock, DENTRY_D_LOCK_NESTED);
+ 		if (simple_positive(child)) {
+ 			spin_unlock(&child->d_lock);
+diff -Naur linux.old/fs/namespace.c linux/fs/namespace.c
+--- linux.old/fs/namespace.c	2020-04-22 11:59:38.663628910 +0800
++++ linux/fs/namespace.c	2020-04-22 18:20:41.591945013 +0800
+@@ -893,8 +893,21 @@
+ 
+ 	mnt->mnt.mnt_flags = old->mnt.mnt_flags & ~(MNT_WRITE_HOLD|MNT_MARKED);
+ 	/* Don't allow unprivileged users to change mount flags */
+-	if ((flag & CL_UNPRIVILEGED) && (mnt->mnt.mnt_flags & MNT_READONLY))
+-		mnt->mnt.mnt_flags |= MNT_LOCK_READONLY;
++	if (flag & CL_UNPRIVILEGED) {
++		mnt->mnt.mnt_flags |= MNT_LOCK_ATIME;
++
++		if (mnt->mnt.mnt_flags & MNT_READONLY)
++			mnt->mnt.mnt_flags |= MNT_LOCK_READONLY;
++
++		if (mnt->mnt.mnt_flags & MNT_NODEV)
++			mnt->mnt.mnt_flags |= MNT_LOCK_NODEV;
++
++		if (mnt->mnt.mnt_flags & MNT_NOSUID)
++			mnt->mnt.mnt_flags |= MNT_LOCK_NOSUID;
++
++		if (mnt->mnt.mnt_flags & MNT_NOEXEC)
++			mnt->mnt.mnt_flags |= MNT_LOCK_NOEXEC;
++	}
+ 
+ 	/* Don't allow unprivileged users to reveal what is under a mount */
+ 	if ((flag & CL_UNPRIVILEGED) && list_empty(&old->mnt_expire))
+@@ -1346,6 +1359,8 @@
+ 		 * Special case for "unmounting" root ...
+ 		 * we just try to remount it readonly.
+ 		 */
++		if (!capable(CAP_SYS_ADMIN))
++			return -EPERM;
+ 		down_write(&sb->s_umount);
+ 		if (!(sb->s_flags & MS_RDONLY))
+ 			retval = do_remount_sb(sb, MS_RDONLY, NULL, 0);
+@@ -1958,6 +1973,23 @@
+ 	if (path->dentry != path->mnt->mnt_root)
+ 		return -EINVAL;
+ 
++	if ((mnt->mnt.mnt_flags & MNT_LOCK_NODEV) &&
++	    !(mnt_flags & MNT_NODEV)) {
++		return -EPERM;
++	}
++	if ((mnt->mnt.mnt_flags & MNT_LOCK_NOSUID) &&
++	    !(mnt_flags & MNT_NOSUID)) {
++		return -EPERM;
++	}
++	if ((mnt->mnt.mnt_flags & MNT_LOCK_NOEXEC) &&
++	    !(mnt_flags & MNT_NOEXEC)) {
++		return -EPERM;
++	}
++	if ((mnt->mnt.mnt_flags & MNT_LOCK_ATIME) &&
++	    ((mnt->mnt.mnt_flags & MNT_ATIME_MASK) != (mnt_flags & MNT_ATIME_MASK))) {
++		return -EPERM;
++	}
++
+ 	err = security_sb_remount(sb, data);
+ 	if (err)
+ 		return err;
+@@ -1971,7 +2003,7 @@
+ 		err = do_remount_sb(sb, flags, data, 0);
+ 	if (!err) {
+ 		lock_mount_hash();
+-		mnt_flags |= mnt->mnt.mnt_flags & MNT_PROPAGATION_MASK;
++		mnt_flags |= mnt->mnt.mnt_flags & ~MNT_USER_SETTABLE_MASK;
+ 		mnt->mnt.mnt_flags = mnt_flags;
+ 		touch_mnt_namespace(mnt->mnt_ns);
+ 		unlock_mount_hash();
+@@ -2156,7 +2188,7 @@
+ 		 */
+ 		if (!(type->fs_flags & FS_USERNS_DEV_MOUNT)) {
+ 			flags |= MS_NODEV;
+-			mnt_flags |= MNT_NODEV;
++			mnt_flags |= MNT_NODEV | MNT_LOCK_NODEV;
+ 		}
+ 	}
+ 
+diff -Naur linux.old/fs/ncpfs/dir.c linux/fs/ncpfs/dir.c
+--- linux.old/fs/ncpfs/dir.c	2020-04-22 11:59:38.623628909 +0800
++++ linux/fs/ncpfs/dir.c	2020-04-22 18:12:48.465759756 +0800
+@@ -406,7 +406,7 @@
+ 	spin_lock(&parent->d_lock);
+ 	next = parent->d_subdirs.next;
+ 	while (next != &parent->d_subdirs) {
+-		dent = list_entry(next, struct dentry, d_u.d_child);
++		dent = list_entry(next, struct dentry, d_child);
+ 		if ((unsigned long)dent->d_fsdata == fpos) {
+ 			if (dent->d_inode)
+ 				dget(dent);
+diff -Naur linux.old/fs/ncpfs/ncplib_kernel.h linux/fs/ncpfs/ncplib_kernel.h
+--- linux.old/fs/ncpfs/ncplib_kernel.h	2020-04-22 11:59:38.627628909 +0800
++++ linux/fs/ncpfs/ncplib_kernel.h	2020-04-22 18:13:58.913729832 +0800
+@@ -194,7 +194,7 @@
+ 	spin_lock(&parent->d_lock);
+ 	next = parent->d_subdirs.next;
+ 	while (next != &parent->d_subdirs) {
+-		dentry = list_entry(next, struct dentry, d_u.d_child);
++		dentry = list_entry(next, struct dentry, d_child);
+ 
+ 		if (dentry->d_fsdata == NULL)
+ 			ncp_age_dentry(server, dentry);
+@@ -216,7 +216,7 @@
+ 	spin_lock(&parent->d_lock);
+ 	next = parent->d_subdirs.next;
+ 	while (next != &parent->d_subdirs) {
+-		dentry = list_entry(next, struct dentry, d_u.d_child);
++		dentry = list_entry(next, struct dentry, d_child);
+ 		dentry->d_fsdata = NULL;
+ 		ncp_age_dentry(server, dentry);
+ 		next = next->next;
+diff -Naur linux.old/fs/nfs/getroot.c linux/fs/nfs/getroot.c
+--- linux.old/fs/nfs/getroot.c	2020-04-22 11:59:38.643628909 +0800
++++ linux/fs/nfs/getroot.c	2020-04-22 18:16:04.844125836 +0800
+@@ -58,7 +58,7 @@
+ 		 */
+ 		spin_lock(&sb->s_root->d_inode->i_lock);
+ 		spin_lock(&sb->s_root->d_lock);
+-		hlist_del_init(&sb->s_root->d_alias);
++		hlist_del_init(&sb->s_root->d_u.d_alias);
+ 		spin_unlock(&sb->s_root->d_lock);
+ 		spin_unlock(&sb->s_root->d_inode->i_lock);
+ 	}
+diff -Naur linux.old/fs/notify/fsnotify.c linux/fs/notify/fsnotify.c
+--- linux.old/fs/notify/fsnotify.c	2020-04-22 11:59:38.615628908 +0800
++++ linux/fs/notify/fsnotify.c	2020-04-23 11:15:08.432424682 +0800
+@@ -63,14 +63,14 @@
+ 	spin_lock(&inode->i_lock);
+ 	/* run all of the dentries associated with this inode.  Since this is a
+ 	 * directory, there damn well better only be one item on this list */
+-	hlist_for_each_entry(alias, &inode->i_dentry, d_alias) {
++	hlist_for_each_entry(alias, &inode->i_dentry, d_u.d_alias) {
+ 		struct dentry *child;
+ 
+ 		/* run all of the children of the original inode and fix their
+ 		 * d_flags to indicate parental interest (their parent is the
+ 		 * original inode) */
+ 		spin_lock(&alias->d_lock);
+-		list_for_each_entry(child, &alias->d_subdirs, d_u.d_child) {
++		list_for_each_entry(child, &alias->d_subdirs, d_child) {
+ 			if (!child->d_inode)
+ 				continue;
+ 
+diff -Naur linux.old/fs/ocfs2/dcache.c linux/fs/ocfs2/dcache.c
+--- linux.old/fs/ocfs2/dcache.c	2020-04-22 11:59:38.651628909 +0800
++++ linux/fs/ocfs2/dcache.c	2020-04-22 18:16:47.924734606 +0800
+@@ -173,7 +173,7 @@
+ 	struct dentry *dentry;
+ 
+ 	spin_lock(&inode->i_lock);
+-	hlist_for_each_entry(dentry, &inode->i_dentry, d_alias) {
++	hlist_for_each_entry(dentry, &inode->i_dentry, d_u.d_alias) {
+ 		spin_lock(&dentry->d_lock);
+ 		if (ocfs2_match_dentry(dentry, parent_blkno, skip_unhashed)) {
+ 			trace_ocfs2_find_local_alias(dentry->d_name.len,
+diff -Naur linux.old/fs/ocfs2/file.c linux/fs/ocfs2/file.c
+--- linux.old/fs/ocfs2/file.c	2020-04-22 11:59:38.643628909 +0800
++++ linux/fs/ocfs2/file.c	2020-04-22 16:20:44.911057557 +0800
+@@ -2472,9 +2472,7 @@
+ 	struct address_space *mapping = out->f_mapping;
+ 	struct inode *inode = mapping->host;
+ 	struct splice_desc sd = {
+-		.total_len = len,
+ 		.flags = flags,
+-		.pos = *ppos,
+ 		.u.file = out,
+ 	};
+ 
+@@ -2484,6 +2482,12 @@
+ 			out->f_path.dentry->d_name.len,
+ 			out->f_path.dentry->d_name.name, len);
+ 
++	ret = generic_write_checks(out, ppos, &len, 0);
++	if (ret)
++		return ret;
++	sd.total_len = len;
++	sd.pos = *ppos;
++
+ 	pipe_lock(pipe);
+ 
+ 	splice_from_pipe_begin(&sd);
+diff -Naur linux.old/fs/splice.c linux/fs/splice.c
+--- linux.old/fs/splice.c	2020-04-22 11:59:38.663628910 +0800
++++ linux/fs/splice.c	2020-04-22 16:22:01.615605973 +0800
+@@ -1012,13 +1012,17 @@
+ 	struct address_space *mapping = out->f_mapping;
+ 	struct inode *inode = mapping->host;
+ 	struct splice_desc sd = {
+-		.total_len = len,
+ 		.flags = flags,
+-		.pos = *ppos,
+ 		.u.file = out,
+ 	};
+ 	ssize_t ret;
+ 
++	ret = generic_write_checks(out, ppos, &len, S_ISBLK(inode->i_mode));
++	if (ret)
++		return ret;
++	sd.total_len = len;
++	sd.pos = *ppos;
++
+ 	pipe_lock(pipe);
+ 
+ 	splice_from_pipe_begin(&sd);
+diff -Naur linux.old/fs/udf/inode.c linux/fs/udf/inode.c
+--- linux.old/fs/udf/inode.c	2020-04-22 11:59:38.579628907 +0800
++++ linux/fs/udf/inode.c	2020-04-22 18:22:03.932802142 +0800
+@@ -1365,6 +1365,7 @@
+ 	struct udf_sb_info *sbi = UDF_SB(inode->i_sb);
+ 	struct udf_inode_info *iinfo = UDF_I(inode);
+ 	unsigned int link_count;
++	int bs = inode->i_sb->s_blocksize;
+ 
+ 	fe = (struct fileEntry *)bh->b_data;
+ 	efe = (struct extendedFileEntry *)bh->b_data;
+@@ -1496,6 +1497,20 @@
+ 		iinfo->i_checkpoint = le32_to_cpu(efe->checkpoint);
+ 	}
+ 
++	/*
++	 * Sanity check length of allocation descriptors and extended attrs to
++	 * avoid integer overflows
++	 */
++	if (iinfo->i_lenEAttr > bs || iinfo->i_lenAlloc > bs) {
++		make_bad_inode(inode);
++		return;
++	}
++	/* Now do exact checks */
++	if (udf_file_entry_alloc_offset(inode) + iinfo->i_lenAlloc > bs) {
++		make_bad_inode(inode);
++		return;
++	}
++
+ 	/* Sanity checks for files in ICB so that we don't get confused later */
+ 	if (iinfo->i_alloc_type == ICBTAG_FLAG_AD_IN_ICB) {
+ 		/*
+diff -Naur linux.old/include/linux/dcache.h linux/include/linux/dcache.h
+--- linux.old/include/linux/dcache.h	2020-04-22 11:59:38.699628910 +0800
++++ linux/include/linux/dcache.h	2020-04-22 18:17:53.046474768 +0800
+@@ -124,15 +124,16 @@
+ 	void *d_fsdata;			/* fs-specific data */
+ 
+ 	struct list_head d_lru;		/* LRU list */
++	struct list_head d_child;	/* child of parent list */
++	struct list_head d_subdirs;	/* our children */
++
+ 	/*
+-	 * d_child and d_rcu can share memory
++	 * d_alias and d_rcu can share memory
+ 	 */
+ 	union {
+-		struct list_head d_child;	/* child of parent list */
++		struct hlist_node d_alias; /* inode alias list */
+ 	 	struct rcu_head d_rcu;
+ 	} d_u;
+-	struct list_head d_subdirs;	/* our children */
+-	struct hlist_node d_alias;	/* inode alias list */
+ };
+ 
+ /*
+diff -Naur linux.old/include/linux/mount.h linux/include/linux/mount.h
+--- linux.old/include/linux/mount.h	2020-04-22 11:59:38.699628910 +0800
++++ linux/include/linux/mount.h	2020-04-22 17:20:55.424307887 +0800
+@@ -42,13 +42,18 @@
+  * flag, consider how it interacts with shared mounts.
+  */
+ #define MNT_SHARED_MASK	(MNT_UNBINDABLE)
+-#define MNT_PROPAGATION_MASK	(MNT_SHARED | MNT_UNBINDABLE)
+-
++#define MNT_USER_SETTABLE_MASK  (MNT_NOSUID | MNT_NODEV | MNT_NOEXEC \
++				 | MNT_NOATIME | MNT_NODIRATIME | MNT_RELATIME \
++				 | MNT_READONLY)
++#define MNT_ATIME_MASK (MNT_NOATIME | MNT_NODIRATIME | MNT_RELATIME )
+ #define MNT_INTERNAL_FLAGS (MNT_SHARED | MNT_WRITE_HOLD | MNT_INTERNAL | \
+ 			    MNT_DOOMED | MNT_SYNC_UMOUNT | MNT_MARKED)
+ 
+ #define MNT_INTERNAL	0x4000
+-
++#define MNT_LOCK_ATIME		0x040000
++#define MNT_LOCK_NOEXEC		0x080000
++#define MNT_LOCK_NOSUID		0x100000
++#define MNT_LOCK_NODEV		0x200000
+ #define MNT_LOCK_READONLY	0x400000
+ #define MNT_LOCKED		0x800000
+ #define MNT_DOOMED		0x1000000
+diff -Naur linux.old/include/linux/user_namespace.h linux/include/linux/user_namespace.h
+--- linux.old/include/linux/user_namespace.h	2020-04-22 11:59:38.691628910 +0800
++++ linux/include/linux/user_namespace.h	2020-04-22 18:27:26.296698028 +0800
+@@ -63,6 +63,7 @@
+ extern ssize_t proc_uid_map_write(struct file *, const char __user *, size_t, loff_t *);
+ extern ssize_t proc_gid_map_write(struct file *, const char __user *, size_t, loff_t *);
+ extern ssize_t proc_projid_map_write(struct file *, const char __user *, size_t, loff_t *);
++extern bool userns_may_setgroups(const struct user_namespace *ns);
+ #else
+ 
+ static inline struct user_namespace *get_user_ns(struct user_namespace *ns)
+@@ -87,6 +88,10 @@
+ {
+ }
+ 
++static inline bool userns_may_setgroups(const struct user_namespace *ns)
++{
++	return true;
++}
+ #endif
+ 
+ #endif /* _LINUX_USER_H */
+diff -Naur linux.old/ipc/msg.c linux/ipc/msg.c
+--- linux.old/ipc/msg.c	2020-04-22 11:59:38.691628910 +0800
++++ linux/ipc/msg.c	2020-04-22 16:57:14.159455919 +0800
+@@ -202,13 +202,6 @@
+ 		return retval;
+ 	}
+ 
+-	/* ipc_addid() locks msq upon success. */
+-	id = ipc_addid(&msg_ids(ns), &msq->q_perm, ns->msg_ctlmni);
+-	if (id < 0) {
+-		ipc_rcu_putref(msq, msg_rcu_free);
+-		return id;
+-	}
+-
+ 	msq->q_stime = msq->q_rtime = 0;
+ 	msq->q_ctime = get_seconds();
+ 	msq->q_cbytes = msq->q_qnum = 0;
+@@ -218,6 +211,13 @@
+ 	INIT_LIST_HEAD(&msq->q_receivers);
+ 	INIT_LIST_HEAD(&msq->q_senders);
+ 
++	/* ipc_addid() locks msq upon success. */
++	id = ipc_addid(&msg_ids(ns), &msq->q_perm, ns->msg_ctlmni);
++	if (id < 0) {
++		ipc_rcu_putref(msq, msg_rcu_free);
++		return id;
++	}
++
+ 	ipc_unlock_object(&msq->q_perm);
+ 	rcu_read_unlock();
+ 
+diff -Naur linux.old/ipc/shm.c linux/ipc/shm.c
+--- linux.old/ipc/shm.c	2020-04-22 11:59:38.691628910 +0800
++++ linux/ipc/shm.c	2020-04-22 16:57:49.608547497 +0800
+@@ -543,12 +543,6 @@
+ 	if (IS_ERR(file))
+ 		goto no_file;
+ 
+-	id = ipc_addid(&shm_ids(ns), &shp->shm_perm, ns->shm_ctlmni);
+-	if (id < 0) {
+-		error = id;
+-		goto no_id;
+-	}
+-
+ 	shp->shm_cprid = task_tgid_vnr(current);
+ 	shp->shm_lprid = 0;
+ 	shp->shm_atim = shp->shm_dtim = 0;
+@@ -558,6 +552,12 @@
+ 	shp->shm_file = file;
+ 	shp->shm_creator = current;
+ 
++	id = ipc_addid(&shm_ids(ns), &shp->shm_perm, ns->shm_ctlmni);
++	if (id < 0) {
++		error = id;
++		goto no_id;
++	}
++
+ 	/*
+ 	 * shmid gets reported as "inode#" in /proc/pid/maps.
+ 	 * proc-ps tools use this. Changing this will break them.
+diff -Naur linux.old/ipc/util.c linux/ipc/util.c
+--- linux.old/ipc/util.c	2020-04-22 11:59:38.691628910 +0800
++++ linux/ipc/util.c	2020-04-22 16:58:22.714918991 +0800
+@@ -277,6 +277,10 @@
+ 	rcu_read_lock();
+ 	spin_lock(&new->lock);
+ 
++	current_euid_egid(&euid, &egid);
++	new->cuid = new->uid = euid;
++	new->gid = new->cgid = egid;
++
+ 	id = idr_alloc(&ids->ipcs_idr, new,
+ 		       (next_id < 0) ? 0 : ipcid_to_idx(next_id), 0,
+ 		       GFP_NOWAIT);
+@@ -289,10 +293,6 @@
+ 
+ 	ids->in_use++;
+ 
+-	current_euid_egid(&euid, &egid);
+-	new->cuid = new->uid = euid;
+-	new->gid = new->cgid = egid;
+-
+ 	if (next_id < 0) {
+ 		new->seq = ids->seq++;
+ 		if (ids->seq > IPCID_SEQ_MAX)
+diff -Naur linux.old/kernel/events/core.c linux/kernel/events/core.c
+--- linux.old/kernel/events/core.c	2020-04-22 11:59:38.691628910 +0800
++++ linux/kernel/events/core.c	2020-04-22 16:17:41.978415541 +0800
+@@ -3195,16 +3195,7 @@
+ 	if (!task)
+ 		return ERR_PTR(-ESRCH);
+ 
+-	/* Reuse ptrace permission checks for now. */
+-	err = -EACCES;
+-	if (!ptrace_may_access(task, PTRACE_MODE_READ))
+-		goto errout;
+-
+ 	return task;
+-errout:
+-	put_task_struct(task);
+-	return ERR_PTR(err);
+-
+ }
+ 
+ /*
+@@ -7231,6 +7222,24 @@
+ 
+ 	get_online_cpus();
+ 
++	if (task) {
++		err = mutex_lock_interruptible(&task->signal->cred_guard_mutex);
++		if (err)
++			goto err_task;
++
++		/*
++		 * Reuse ptrace permission checks for now.
++		 *
++		 * We must hold cred_guard_mutex across this and any potential
++		 * perf_install_in_context() call for this new event to
++		 * serialize against exec() altering our credentials (and the
++		 * perf_event_exit_task() that could imply).
++		 */
++		err = -EACCES;
++		if (!ptrace_may_access(task, PTRACE_MODE_READ))
++			goto err_cred;
++	}
++
+ 	event = perf_event_alloc(&attr, cpu, task, group_leader, NULL,
+ 				 NULL, NULL);
+ 	if (IS_ERR(event)) {
+@@ -7286,11 +7295,6 @@
+ 		goto err_alloc;
+ 	}
+ 
+-	if (task) {
+-		put_task_struct(task);
+-		task = NULL;
+-	}
+-
+ 	/*
+ 	 * Look up the group leader (we will attach this event to it):
+ 	 */
+@@ -7388,6 +7392,11 @@
+ 	}
+ 	mutex_unlock(&ctx->mutex);
+ 
++	if (task) {
++		mutex_unlock(&task->signal->cred_guard_mutex);
++		put_task_struct(task);
++	}
++
+ 	put_online_cpus();
+ 
+ 	event->owner = current;
+@@ -7417,6 +7426,9 @@
+ 	put_ctx(ctx);
+ err_alloc:
+ 	free_event(event);
++err_cred:
++	if (task)
++		mutex_unlock(&task->signal->cred_guard_mutex);
+ err_task:
+ 	put_online_cpus();
+ 	if (task)
+@@ -7651,6 +7663,9 @@
+ 
+ /*
+  * When a child task exits, feed back event values to parent events.
++ *
++ * Can be called with cred_guard_mutex held when called from
++ * install_exec_creds().
+  */
+ void perf_event_exit_task(struct task_struct *child)
+ {
+diff -Naur linux.old/kernel/groups.c linux/kernel/groups.c
+--- linux.old/kernel/groups.c	2020-04-22 11:59:38.691628910 +0800
++++ linux/kernel/groups.c	2020-04-22 18:28:35.800363445 +0800
+@@ -6,6 +6,7 @@
+ #include <linux/slab.h>
+ #include <linux/security.h>
+ #include <linux/syscalls.h>
++#include <linux/user_namespace.h>
+ #include <asm/uaccess.h>
+ 
+ /* init to 2 - one for init_task, one to ensure it is never freed */
+@@ -223,6 +224,14 @@
+ 	return i;
+ }
+ 
++bool may_setgroups(void)
++{
++	struct user_namespace *user_ns = current_user_ns();
++
++	return ns_capable(user_ns, CAP_SETGID) &&
++		userns_may_setgroups(user_ns);
++}
++
+ /*
+  *	SMP: Our groups are copy-on-write. We can set them safely
+  *	without another task interfering.
+@@ -233,7 +242,7 @@
+ 	struct group_info *group_info;
+ 	int retval;
+ 
+-	if (!ns_capable(current_user_ns(), CAP_SETGID))
++	if (!may_setgroups())
+ 		return -EPERM;
+ 	if ((unsigned)gidsetsize > NGROUPS_MAX)
+ 		return -EINVAL;
+diff -Naur linux.old/kernel/trace/trace.c linux/kernel/trace/trace.c
+--- linux.old/kernel/trace/trace.c	2020-04-22 11:59:38.687628910 +0800
++++ linux/kernel/trace/trace.c	2020-04-22 18:18:47.478584657 +0800
+@@ -6159,7 +6159,7 @@
+ 	int ret;
+ 
+ 	/* Paranoid: Make sure the parent is the "instances" directory */
+-	parent = hlist_entry(inode->i_dentry.first, struct dentry, d_alias);
++	parent = hlist_entry(inode->i_dentry.first, struct dentry, d_u.d_alias);
+ 	if (WARN_ON_ONCE(parent != trace_instance_dir))
+ 		return -ENOENT;
+ 
+@@ -6186,7 +6186,7 @@
+ 	int ret;
+ 
+ 	/* Paranoid: Make sure the parent is the "instances" directory */
+-	parent = hlist_entry(inode->i_dentry.first, struct dentry, d_alias);
++	parent = hlist_entry(inode->i_dentry.first, struct dentry, d_u.d_alias);
+ 	if (WARN_ON_ONCE(parent != trace_instance_dir))
+ 		return -ENOENT;
+ 
+diff -Naur linux.old/kernel/trace/trace_events.c linux/kernel/trace/trace_events.c
+--- linux.old/kernel/trace/trace_events.c	2020-04-22 11:59:38.687628910 +0800
++++ linux/kernel/trace/trace_events.c	2020-04-22 18:19:03.839278163 +0800
+@@ -428,7 +428,7 @@
+ 
+ 	if (dir) {
+ 		spin_lock(&dir->d_lock);	/* probably unneeded */
+-		list_for_each_entry(child, &dir->d_subdirs, d_u.d_child) {
++		list_for_each_entry(child, &dir->d_subdirs, d_child) {
+ 			if (child->d_inode)	/* probably unneeded */
+ 				child->d_inode->i_private = NULL;
+ 		}
+diff -Naur linux.old/kernel/user_namespace.c linux/kernel/user_namespace.c
+--- linux.old/kernel/user_namespace.c	2020-04-22 11:59:38.683628910 +0800
++++ linux/kernel/user_namespace.c	2020-04-22 18:26:32.795385878 +0800
+@@ -804,17 +804,15 @@
+ 				struct user_namespace *ns, int cap_setid,
+ 				struct uid_gid_map *new_map)
+ {
+-	/* Allow mapping to your own filesystem ids */
+-	if ((new_map->nr_extents == 1) && (new_map->extent[0].count == 1)) {
++	const struct cred *cred = file->f_cred;
++	/* Don't allow mappings that would allow anything that wouldn't
++	 * be allowed without the establishment of unprivileged mappings.
++	 */
++	if ((new_map->nr_extents == 1) && (new_map->extent[0].count == 1) &&
++	    uid_eq(ns->owner, cred->euid)) {
+ 		u32 id = new_map->extent[0].lower_first;
+ 		if (cap_setid == CAP_SETUID) {
+-			kuid_t uid = make_kuid(ns->parent, id);
+-			if (uid_eq(uid, file->f_cred->fsuid))
+-				return true;
+-		}
+-		else if (cap_setid == CAP_SETGID) {
+-			kgid_t gid = make_kgid(ns->parent, id);
+-			if (gid_eq(gid, file->f_cred->fsgid))
++			if (uid_eq(uid, cred->euid))
+ 				return true;
+ 		}
+ 	}
+@@ -834,6 +832,20 @@
+ 	return false;
+ }
+ 
++bool userns_may_setgroups(const struct user_namespace *ns)
++{
++	bool allowed;
++
++	mutex_lock(&id_map_mutex);
++	/* It is not safe to use setgroups until a gid mapping in
++	 * the user namespace has been established.
++	 */
++	allowed = ns->gid_map.nr_extents != 0;
++	mutex_unlock(&id_map_mutex);
++
++	return allowed;
++}
++
+ static void *userns_get(struct task_struct *task)
+ {
+ 	struct user_namespace *user_ns;
+diff -Naur linux.old/net/ipv6/ip6mr.c linux/net/ipv6/ip6mr.c
+--- linux.old/net/ipv6/ip6mr.c	2020-04-22 11:59:38.703628911 +0800
++++ linux/net/ipv6/ip6mr.c	2020-04-22 18:31:58.890816925 +0800
+@@ -1660,6 +1660,10 @@
+ 	struct net *net = sock_net(sk);
+ 	struct mr6_table *mrt;
+ 
++	if (sk->sk_type != SOCK_RAW ||
++	    inet_sk(sk)->inet_num != IPPROTO_ICMPV6)
++		return -EOPNOTSUPP;
++
+ 	mrt = ip6mr_get_table(net, raw6_sk(sk)->ip6mr_table ? : RT6_TABLE_DFLT);
+ 	if (mrt == NULL)
+ 		return -ENOENT;
+@@ -1671,9 +1675,6 @@
+ 
+ 	switch (optname) {
+ 	case MRT6_INIT:
+-		if (sk->sk_type != SOCK_RAW ||
+-		    inet_sk(sk)->inet_num != IPPROTO_ICMPV6)
+-			return -EOPNOTSUPP;
+ 		if (optlen < sizeof(int))
+ 			return -EINVAL;
+ 
+@@ -1809,6 +1810,10 @@
+ 	struct net *net = sock_net(sk);
+ 	struct mr6_table *mrt;
+ 
++	if (sk->sk_type != SOCK_RAW ||
++	    inet_sk(sk)->inet_num != IPPROTO_ICMPV6)
++		return -EOPNOTSUPP;
++
+ 	mrt = ip6mr_get_table(net, raw6_sk(sk)->ip6mr_table ? : RT6_TABLE_DFLT);
+ 	if (mrt == NULL)
+ 		return -ENOENT;
+diff -Naur linux.old/net/ipv6/sit.c linux/net/ipv6/sit.c
+--- linux.old/net/ipv6/sit.c	2020-04-22 11:59:38.703628911 +0800
++++ linux/net/ipv6/sit.c	2020-04-22 18:32:23.801541104 +0800
+@@ -1779,6 +1779,7 @@
+ 
+ err_reg_dev:
+ 	dev_put(sitn->fb_tunnel_dev);
++	free_netdev(sitn->fb_tunnel_dev);
+ err_dev_free:
+ 	ipip6_dev_free(sitn->fb_tunnel_dev);
+ err_alloc_dev:
+diff -Naur linux.old/net/nfc/llcp_sock.c linux/net/nfc/llcp_sock.c
+--- linux.old/net/nfc/llcp_sock.c	2020-04-22 11:59:38.699628910 +0800
++++ linux/net/nfc/llcp_sock.c	2020-04-22 18:37:21.925385379 +0800
+@@ -1004,10 +1004,13 @@
+ 	    sock->type != SOCK_RAW)
+ 		return -ESOCKTNOSUPPORT;
+ 
+-	if (sock->type == SOCK_RAW)
++	if (sock->type == SOCK_RAW) {
++		if (!capable(CAP_NET_RAW))
++			return -EPERM
+ 		sock->ops = &llcp_rawsock_ops;
+-	else
++	} else {
+ 		sock->ops = &llcp_sock_ops;
++	}
+ 
+ 	sk = nfc_llcp_sock_alloc(sock, sock->type, GFP_ATOMIC);
+ 	if (sk == NULL)
+diff -Naur linux.old/security/keys/keyring.c linux/security/keys/keyring.c
+--- linux.old/security/keys/keyring.c	2020-04-22 11:59:38.671628910 +0800
++++ linux/security/keys/keyring.c	2020-04-22 17:25:19.992412823 +0800
+@@ -1156,9 +1156,11 @@
+ 	if (index_key->type == &key_type_keyring)
+ 		up_write(&keyring_serialise_link_sem);
+ 
+-	if (edit && !edit->dead_leaf) {
+-		key_payload_reserve(keyring,
+-				    keyring->datalen - KEYQUOTA_LINK_BYTES);
++	if (edit) {
++		if (!edit->dead_leaf) {
++			key_payload_reserve(keyring,
++				keyring->datalen - KEYQUOTA_LINK_BYTES);
++		}
+ 		assoc_array_cancel_edit(edit);
+ 	}
+ 	up_write(&keyring->sem);
+diff -Naur linux.old/security/selinux/selinuxfs.c linux/security/selinux/selinuxfs.c
+--- linux.old/security/selinux/selinuxfs.c	2020-04-22 11:59:38.663628910 +0800
++++ linux/security/selinux/selinuxfs.c	2020-04-22 18:19:49.699139836 +0800
+@@ -1200,7 +1200,7 @@
+ 	spin_lock(&de->d_lock);
+ 	node = de->d_subdirs.next;
+ 	while (node != &de->d_subdirs) {
+-		struct dentry *d = list_entry(node, struct dentry, d_u.d_child);
++		struct dentry *d = list_entry(node, struct dentry, d_child);
+ 
+ 		spin_lock_nested(&d->d_lock, DENTRY_D_LOCK_NESTED);
+ 		list_del_init(node);
+@@ -1674,12 +1674,12 @@
+ 
+ 	list_for_each(class_node, &class_dir->d_subdirs) {
+ 		struct dentry *class_subdir = list_entry(class_node,
+-					struct dentry, d_u.d_child);
++					struct dentry, d_child);
+ 		struct list_head *class_subdir_node;
+ 
+ 		list_for_each(class_subdir_node, &class_subdir->d_subdirs) {
+ 			struct dentry *d = list_entry(class_subdir_node,
+-						struct dentry, d_u.d_child);
++						struct dentry, d_child);
+ 
+ 			if (d->d_inode)
+ 				if (d->d_inode->i_mode & S_IFDIR)

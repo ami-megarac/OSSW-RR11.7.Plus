@@ -1,0 +1,17 @@
+diff -Naur linux.old/fs/proc/proc_sysctl.c linux.new/fs/proc/proc_sysctl.c
+--- linux.old/fs/proc/proc_sysctl.c	2020-02-19 14:36:18.709203529 +0800
++++ linux.new/fs/proc/proc_sysctl.c	2020-02-19 14:39:15.185207973 +0800
+@@ -1510,8 +1510,11 @@
+ 	if (--header->nreg)
+ 		return;
+ 
+-	put_links(header);
+-	start_unregistering(header);
++	if (parent)
++	{
++		put_links(header);
++		start_unregistering(header);
++	}
+ 	if (!--header->count)
+ 		kfree_rcu(header, rcu);
+ 

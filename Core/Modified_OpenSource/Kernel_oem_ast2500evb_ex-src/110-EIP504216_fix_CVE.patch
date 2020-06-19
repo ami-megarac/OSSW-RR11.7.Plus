@@ -1,0 +1,270 @@
+diff -Naur linux.old/drivers/usb/core/devio.c linux/drivers/usb/core/devio.c
+--- linux.old/drivers/usb/core/devio.c	2019-11-11 15:48:08.193398213 +0800
++++ linux/drivers/usb/core/devio.c	2019-11-11 17:23:15.651457434 +0800
+@@ -1103,10 +1103,11 @@
+ 
+ static int proc_connectinfo(struct dev_state *ps, void __user *arg)
+ {
+-	struct usbdevfs_connectinfo ci = {
+-		.devnum = ps->dev->devnum,
+-		.slow = ps->dev->speed == USB_SPEED_LOW
+-	};
++	struct usbdevfs_connectinfo ci;
++
++	memset(&ci, 0, sizeof(ci));
++	ci.devnum = ps->dev->devnum;
++	ci.slow = ps->dev->speed == USB_SPEED_LOW;
+ 
+ 	if (copy_to_user(arg, &ci, sizeof(ci)))
+ 		return -EFAULT;
+diff -Naur linux.old/fs/ext4/inode.c linux/fs/ext4/inode.c
+--- linux.old/fs/ext4/inode.c	2019-11-11 15:48:07.809398224 +0800
++++ linux/fs/ext4/inode.c	2019-11-12 15:54:39.012184535 +0800
+@@ -695,6 +695,20 @@
+ 		int ret = check_block_validity(inode, map);
+ 		if (ret != 0)
+ 			return ret;
++
++		/*
++		 * Inodes with freshly allocated blocks where contents will be
++		 * visible after transaction commit must be on transaction's
++		 * ordered data list.
++		 */
++		if (map->m_flags & EXT4_MAP_NEW &&
++		    !(map->m_flags & EXT4_MAP_UNWRITTEN) &&
++		    !IS_NOQUOTA(inode) &&
++		    ext4_should_order_data(inode)) {
++			ret = ext4_jbd2_file_inode(handle, inode);
++			if (ret)
++				return ret;
++		}
+ 	}
+ 	return retval;
+ }
+@@ -1059,14 +1073,6 @@
+ 	int i_size_changed = 0;
+ 
+ 	trace_ext4_write_end(inode, pos, len, copied);
+-	if (ext4_test_inode_state(inode, EXT4_STATE_ORDERED_MODE)) {
+-		ret = ext4_jbd2_file_inode(handle, inode);
+-		if (ret) {
+-			unlock_page(page);
+-			page_cache_release(page);
+-			goto errout;
+-		}
+-	}
+ 
+ 	if (ext4_has_inline_data(inode)) {
+ 		ret = ext4_write_inline_data_end(inode, pos, len,
+diff -Naur linux.old/fs/posix_acl.c linux/fs/posix_acl.c
+--- linux.old/fs/posix_acl.c	2019-11-11 15:48:07.781398225 +0800
++++ linux/fs/posix_acl.c	2019-11-12 16:07:59.300165255 +0800
+@@ -594,6 +594,37 @@
+ }
+ EXPORT_SYMBOL_GPL(posix_acl_create);
+ 
++/**
++ * posix_acl_update_mode  -  update mode in set_acl
++ *
++ * Update the file mode when setting an ACL: compute the new file permission
++ * bits based on the ACL.  In addition, if the ACL is equivalent to the new
++ * file mode, set *acl to NULL to indicate that no ACL should be set.
++ *
++ * As with chmod, clear the setgit bit if the caller is not in the owning group
++ * or capable of CAP_FSETID (see inode_change_ok).
++ *
++ * Called from set_acl inode operations.
++ */
++int posix_acl_update_mode(struct inode *inode, umode_t *mode_p,
++			  struct posix_acl **acl)
++{
++	umode_t mode = inode->i_mode;
++	int error;
++
++	error = posix_acl_equiv_mode(*acl, &mode);
++	if (error < 0)
++		return error;
++	if (error == 0)
++		*acl = NULL;
++	if (!in_group_p(inode->i_gid) &&
++	    !capable_wrt_inode_uidgid(inode, CAP_FSETID))
++		mode &= ~S_ISGID;
++	*mode_p = mode;
++	return 0;
++}
++EXPORT_SYMBOL(posix_acl_update_mode);
++
+ /*
+  * Fix up the uids and gids in posix acl extended attributes in place.
+  */
+@@ -869,11 +900,10 @@
+ 	int error;
+ 
+ 	if (type == ACL_TYPE_ACCESS) {
+-		error = posix_acl_equiv_mode(acl, &inode->i_mode);
+-		if (error < 0)
+-			return 0;
+-		if (error == 0)
+-			acl = NULL;
++		error = posix_acl_update_mode(inode,
++				&inode->i_mode, &acl);
++		if (error)
++			return error;
+ 	}
+ 
+ 	inode->i_ctime = CURRENT_TIME;
+diff -Naur linux.old/include/linux/key.h linux/include/linux/key.h
+--- linux.old/include/linux/key.h	2019-11-11 15:48:08.013398218 +0800
++++ linux/include/linux/key.h	2019-11-12 16:22:44.011127317 +0800
+@@ -170,6 +170,7 @@
+ #define KEY_FLAG_INVALIDATED	7	/* set if key has been invalidated */
+ #define KEY_FLAG_TRUSTED	8	/* set if key is trusted */
+ #define KEY_FLAG_TRUSTED_ONLY	9	/* set if keyring only accepts links to trusted keys */
++#define KEY_FLAG_UID_KEYRING	11	/* set if key is a user or user session keyring */
+ 
+ 	/* the key type and key description string
+ 	 * - the desc is used to match a key against search criteria
+@@ -221,6 +222,7 @@
+ #define KEY_ALLOC_QUOTA_OVERRUN	0x0001	/* add to quota, permit even if overrun */
+ #define KEY_ALLOC_NOT_IN_QUOTA	0x0002	/* not in quota */
+ #define KEY_ALLOC_TRUSTED	0x0004	/* Key should be flagged as trusted */
++#define KEY_ALLOC_UID_KEYRING		0x0010	/* allocating a user or user session keyring */
+ 
+ extern void key_revoke(struct key *key);
+ extern void key_invalidate(struct key *key);
+@@ -309,6 +311,11 @@
+ 
+ extern void key_set_timeout(struct key *, unsigned);
+ 
++/*
++ * The permissions required on a key that we're looking up.
++ */
++#define	KEY_NEED_SEARCH	0x08	/* Require permission to search (keyring) or find (key) */
++
+ /**
+  * key_is_instantiated - Determine if a key has been positively instantiated
+  * @key: The key to check.
+diff -Naur linux.old/include/linux/posix-timers.h linux/include/linux/posix-timers.h
+--- linux.old/include/linux/posix-timers.h	2019-11-11 15:48:07.997398218 +0800
++++ linux/include/linux/posix-timers.h	2019-11-11 17:03:11.304417617 +0800
+@@ -65,8 +65,8 @@
+ 	spinlock_t it_lock;
+ 	clockid_t it_clock;		/* which timer type */
+ 	timer_t it_id;			/* timer id */
+-	int it_overrun;			/* overrun on pending signal  */
+-	int it_overrun_last;		/* overrun on last delivered signal */
++	s64 it_overrun;			/* overrun on pending signal  */
++	s64 it_overrun_last;		/* overrun on last delivered signal */
+ 	int it_requeue_pending;		/* waiting to requeue this timer */
+ #define REQUEUE_PENDING 1
+ 	int it_sigev_notify;		/* notify word of sigevent struct */
+diff -Naur linux.old/kernel/time/alarmtimer.c linux/kernel/time/alarmtimer.c
+--- linux.old/kernel/time/alarmtimer.c	2019-11-11 15:48:07.949398220 +0800
++++ linux/kernel/time/alarmtimer.c	2019-11-11 17:00:05.737330073 +0800
+@@ -755,7 +755,7 @@
+ 	/* Convert (if necessary) to absolute time */
+ 	if (flags != TIMER_ABSTIME) {
+ 		ktime_t now = alarm_bases[type].gettime();
+-		exp = ktime_add(now, exp);
++		exp = ktime_add_safe(now, exp);
+ 	}
+ 
+ 	if (alarmtimer_do_nsleep(&alarm, exp))
+diff -Naur linux.old/net/netlink/af_netlink.c linux/net/netlink/af_netlink.c
+--- linux.old/net/netlink/af_netlink.c	2019-11-11 15:48:08.117398215 +0800
++++ linux/net/netlink/af_netlink.c	2019-11-11 15:50:17.213507004 +0800
+@@ -198,6 +198,11 @@
+ 	struct sock *sk = skb->sk;
+ 	int ret = -ENOMEM;
+ 
++	if (!net_eq(dev_net(dev), sock_net(sk)) &&
++		!net_eq(dev_net(dev), &init_net)) {
++		return 0;
++	}
++
+ 	dev_hold(dev);
+ 	nskb = skb_clone(skb, GFP_ATOMIC);
+ 	if (nskb) {
+diff -Naur linux.old/security/keys/internal.h linux/security/keys/internal.h
+--- linux.old/security/keys/internal.h	2019-11-11 15:48:07.881398222 +0800
++++ linux/security/keys/internal.h	2019-11-11 15:58:14.012732278 +0800
+@@ -137,7 +137,7 @@
+ extern key_ref_t search_my_process_keyrings(struct keyring_search_context *ctx);
+ extern key_ref_t search_process_keyrings(struct keyring_search_context *ctx);
+ 
+-extern struct key *find_keyring_by_name(const char *name, bool skip_perm_check);
++extern struct key *find_keyring_by_name(const char *name, bool uid_keyring);
+ 
+ extern int install_user_keyrings(void);
+ extern int install_thread_keyring_to_cred(struct cred *);
+diff -Naur linux.old/security/keys/key.c linux/security/keys/key.c
+--- linux.old/security/keys/key.c	2019-11-11 15:48:07.881398222 +0800
++++ linux/security/keys/key.c	2019-11-11 16:00:23.981907247 +0800
+@@ -298,6 +298,8 @@
+ 		key->flags |= 1 << KEY_FLAG_IN_QUOTA;
+ 	if (flags & KEY_ALLOC_TRUSTED)
+ 		key->flags |= 1 << KEY_FLAG_TRUSTED;
++	if (flags & KEY_ALLOC_UID_KEYRING)
++		key->flags |= 1 << KEY_FLAG_UID_KEYRING;
+ 
+ #ifdef KEY_DEBUGGING
+ 	key->magic = KEY_DEBUG_MAGIC;
+diff -Naur linux.old/security/keys/keyring.c linux/security/keys/keyring.c
+--- linux.old/security/keys/keyring.c	2019-11-11 15:48:07.877398222 +0800
++++ linux/security/keys/keyring.c	2019-11-11 16:01:57.590046596 +0800
+@@ -943,7 +943,7 @@
+  * Returns a pointer to the keyring with the keyring's refcount having being
+  * incremented on success.  -ENOKEY is returned if a key could not be found.
+  */
+-struct key *find_keyring_by_name(const char *name, bool skip_perm_check)
++struct key *find_keyring_by_name(const char *name, bool uid_keyring)
+ {
+ 	struct key *keyring;
+ 	int bucket;
+@@ -971,10 +971,15 @@
+ 			if (strcmp(keyring->description, name) != 0)
+ 				continue;
+ 
+-			if (!skip_perm_check &&
+-			    key_permission(make_key_ref(keyring, 0),
+-					   KEY_SEARCH) < 0)
+-				continue;
++			if (uid_keyring) {
++				if (!test_bit(KEY_FLAG_UID_KEYRING,
++					      &keyring->flags))
++					continue;
++			} else {
++				if (key_permission(make_key_ref(keyring, 0),
++						   KEY_NEED_SEARCH) < 0)
++					continue;
++			}
+ 
+ 			/* we've got a match but we might end up racing with
+ 			 * key_cleanup() if the keyring is currently 'dead'
+diff -Naur linux.old/security/keys/process_keys.c linux/security/keys/process_keys.c
+--- linux.old/security/keys/process_keys.c	2019-11-11 15:48:07.885398222 +0800
++++ linux/security/keys/process_keys.c	2019-11-11 16:31:42.728665744 +0800
+@@ -76,7 +76,9 @@
+ 		if (IS_ERR(uid_keyring)) {
+ 			uid_keyring = keyring_alloc(buf, user->uid, INVALID_GID,
+ 						    cred, user_keyring_perm,
+-						    KEY_ALLOC_IN_QUOTA, NULL);
++							KEY_ALLOC_UID_KEYRING |
++							KEY_ALLOC_IN_QUOTA,
++						    NULL);
+ 			if (IS_ERR(uid_keyring)) {
+ 				ret = PTR_ERR(uid_keyring);
+ 				goto error;
+@@ -92,7 +94,11 @@
+ 			session_keyring =
+ 				keyring_alloc(buf, user->uid, INVALID_GID,
+ 					      cred, user_keyring_perm,
+-					      KEY_ALLOC_IN_QUOTA, NULL);
++						  KEY_ALLOC_UID_KEYRING |
++						  KEY_ALLOC_IN_QUOTA,
++					      
++						  
++						  NULL);
+ 			if (IS_ERR(session_keyring)) {
+ 				ret = PTR_ERR(session_keyring);
+ 				goto error_release;
